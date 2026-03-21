@@ -336,11 +336,14 @@ lv_obj_t * screen_home_create(void) {
 
     lv_obj_t * time_col = lv_obj_create(screen);
     lv_obj_remove_style_all(time_col);
-    lv_obj_set_size(time_col, clampi((sw * 350) / 640, 280, 360), header_h);
-    lv_obj_set_pos(time_col, clampi((sw * 28) / 640, 12, 28), clampi((sh * 18) / 480, 10, 20));
+    int32_t time_w = clampi((sw * 330) / 640, 260, 340);
+    int32_t time_x = clampi((sw * 28) / 640, 12, 28);
+    int32_t time_y = clampi((sh * 18) / 480, 10, 20);
+    lv_obj_set_size(time_col, time_w, header_h);
+    lv_obj_set_pos(time_col, time_x, time_y);
 
     g_lbl_time = lv_label_create(time_col);
-    lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_56, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
@@ -350,10 +353,17 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_align(g_lbl_date, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     lv_obj_t * quick_btn = lv_btn_create(screen);
-    lv_obj_set_size(quick_btn, clampi((sw * 236) / 640, 200, 236), clampi((sh * 106) / 480, 84, 106));
-    lv_obj_set_pos(quick_btn,
-                   sw - lv_obj_get_width(quick_btn) - clampi((sw * 20) / 640, 10, 20),
-                   clampi((sh * 18) / 480, 10, 20));
+    int32_t quick_w = clampi((sw * 220) / 640, 188, 220);
+    int32_t quick_h = clampi((sh * 94) / 480, 80, 96);
+    int32_t quick_gap = clampi((sw * 10) / 640, 6, 12);
+    int32_t quick_x = time_x + time_w + quick_gap;
+    int32_t quick_y = time_y + 4;
+    int32_t quick_right_limit = sw - quick_w - clampi((sw * 10) / 640, 8, 12);
+    if (quick_x > quick_right_limit) {
+        quick_x = quick_right_limit;
+    }
+    lv_obj_set_size(quick_btn, quick_w, quick_h);
+    lv_obj_set_pos(quick_btn, quick_x, quick_y);
     lv_obj_set_style_bg_opa(quick_btn, LV_OPA_10, LV_PART_MAIN);
     lv_obj_set_style_bg_color(quick_btn, lv_color_hex(0x1D1D1D), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_color(quick_btn, lv_color_hex(0x151515), LV_PART_MAIN);
