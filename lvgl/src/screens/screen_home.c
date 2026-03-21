@@ -8,6 +8,8 @@
 #include <string.h>
 #include <time.h>
 
+extern const lv_font_t Antonio_bold_80;
+
 typedef struct {
     lv_obj_t * card;
     lv_obj_t * title;
@@ -343,7 +345,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_pos(time_col, time_x, time_y);
 
     g_lbl_time = lv_label_create(time_col);
-    lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_56, LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_80, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
