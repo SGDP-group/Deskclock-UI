@@ -33,8 +33,13 @@ include_directories(${CMAKE_SOURCE_DIR})
 # Add LVGL — in v9 this is the only submodule you need
 add_subdirectory(lvgl)
 
-# Collect all your source files from src/
-file(GLOB_RECURSE APP_SOURCES "src/*.c")
+# App-level sources live outside the vendored lvgl/ directory by design.
+# Keep this explicit so new files are never skipped by stale CMake globs.
+set(APP_SOURCES
+    src/home_api_client.c
+    src/net_stream.c
+    src/fonts/Antonio_bold_80.c
+)
 
 add_executable(lvgl_app
     main.c
