@@ -19,6 +19,20 @@
 
 static bool g_winsock_ready = false;
 
+static void copy_text_safe(char * dst, size_t dst_len, const char * src) {
+    if (dst == NULL || dst_len == 0) {
+        return;
+    }
+
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+
+    strncpy(dst, src, dst_len - 1);
+    dst[dst_len - 1] = '\0';
+}
+
 static bool json_get_string(const char * obj, const char * key, char * out, size_t out_len) {
     if (obj == NULL || key == NULL || out == NULL || out_len == 0) {
         return false;
@@ -132,16 +146,14 @@ static void format_time_range(const char * start, const char * end, char * out, 
     out[0] = '\0';
 
     if (start == NULL || end == NULL) {
-        strncpy(out, "No time", out_len - 1);
-        out[out_len - 1] = '\0';
+        copy_text_safe(out, out_len, "No time");
         return;
     }
 
     const char * s = strchr(start, 'T');
     const char * e = strchr(end, 'T');
     if (s == NULL || e == NULL || strlen(s) < 6 || strlen(e) < 6) {
-        strncpy(out, "No time", out_len - 1);
-        out[out_len - 1] = '\0';
+        copy_text_safe(out, out_len, "No time");
         return;
     }
 
@@ -187,11 +199,11 @@ static uint8_t parse_due_today_json(const char * body, HomeApiTask * tasks, uint
         }
 
         if (!json_get_string(obj_buf, "description", t->subtitle, sizeof(t->subtitle))) {
-            strncpy(t->subtitle, "No description", sizeof(t->subtitle) - 1);
+            copy_text_safe(t->subtitle, sizeof(t->subtitle), "No description");
         }
 
         if (!json_get_string(obj_buf, "statusName", t->status, sizeof(t->status))) {
-            strncpy(t->status, t->completed ? "DONE" : "PENDING", sizeof(t->status) - 1);
+            copy_text_safe(t->status, sizeof(t->status), t->completed ? "DONE" : "PENDING");
         }
 
         char start_time[40] = {0};
@@ -201,7 +213,7 @@ static uint8_t parse_due_today_json(const char * body, HomeApiTask * tasks, uint
         format_time_range(start_time, end_time, t->time_range, sizeof(t->time_range));
 
         if (t->title[0] == '\0') {
-            strncpy(t->title, "Untitled task", sizeof(t->title) - 1);
+            copy_text_safe(t->title, sizeof(t->title), "Untitled task");
         }
 
         count++;
