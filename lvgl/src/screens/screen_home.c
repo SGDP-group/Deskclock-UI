@@ -39,7 +39,6 @@ static int32_t g_card_height = 214;
 
 static PendingPayload g_pending = {0};
 static bool g_fetch_inflight = false;
-static bool g_depth_busy = false;
 
 static char g_last_time[16] = {0};
 static char g_last_date[24] = {0};
@@ -132,44 +131,20 @@ static void update_clock_labels(void) {
 }
 
 static void apply_carousel_depth(void) {
-    if (g_task_list == NULL || g_depth_busy) {
+    if (g_task_list == NULL) {
         return;
     }
 
-    g_depth_busy = true;
-
-    if (!lv_obj_is_valid(g_task_list)) {
-        g_depth_busy = false;
-        return;
-    }
-
-    int32_t scroll_y = lv_obj_get_scroll_y(g_task_list);
-    int32_t center = scroll_y + (lv_obj_get_height(g_task_list) / 2);
-    int32_t max_dist = lv_obj_get_height(g_task_list) / 2;
-    if (max_dist <= 0) {
-        g_depth_busy = false;
-        return;
-    }
-
+    /* Keep cards at stable styles while debugging AV during scroll. */
     for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
         lv_obj_t * card = g_cards[i].card;
-        if (card == NULL || !lv_obj_is_valid(card) || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
+        if (card == NULL || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
             continue;
         }
 
-        int32_t child_mid = lv_obj_get_y(card) + (lv_obj_get_height(card) / 2);
-        int32_t dist = LV_ABS(child_mid - center);
-        if (dist > max_dist) {
-            dist = max_dist;
-        }
-
-        lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER - ((dist * 120) / max_dist));
-        int32_t tx = (dist * 8) / max_dist;
-        lv_obj_set_style_opa(card, opa, LV_PART_MAIN);
-        lv_obj_set_style_translate_x(card, tx, LV_PART_MAIN);
+        lv_obj_set_style_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_translate_x(card, 0, LV_PART_MAIN);
     }
-
-    g_depth_busy = false;
 }
 
 static void render_loading_card(const char * title, const char * subtitle) {
@@ -354,11 +329,7 @@ static void quick_focus_event(lv_event_t * e) {
 }
 
 static void list_scroll_event(lv_event_t * e) {
-    lv_obj_t * target = lv_event_get_target(e);
-    if (target == NULL || target != g_task_list) {
-        return;
-    }
-    apply_carousel_depth();
+    (void)e;
 }
 
 static void create_task_cards(lv_obj_t * parent) {
