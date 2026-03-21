@@ -38,7 +38,7 @@ add_subdirectory(lvgl)
 set(APP_SOURCES
     src/home_api_client.c
     src/net_stream.c
-    src/fonts/Antonio_bold_80.c
+    src/fonts/Antonio_bold_64.c
 )
 
 add_executable(lvgl_app
