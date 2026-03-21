@@ -38,7 +38,8 @@ add_executable(lvgl_app
 )
 
 # In v9, link against lvgl::lvgl (namespaced target), not just plain lvgl
-target_link_libraries(lvgl_app lvgl::lvgl)
+find_package(Threads REQUIRED)
+target_link_libraries(lvgl_app lvgl::lvgl Threads::Threads)
 
 # On Windows with MinGW, also link SDL2 and its entry-point shim
 if(WIN32)
