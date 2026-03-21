@@ -8,13 +8,6 @@
 #include <string.h>
 #include <time.h>
 
-#ifdef _WIN32
-#include <process.h>
-#include <windows.h>
-#else
-#include <pthread.h>
-#endif
-
 typedef struct {
     lv_obj_t * card;
     lv_obj_t * title;
@@ -23,13 +16,6 @@ typedef struct {
     lv_obj_t * status;
 } TaskCardRefs;
 
-typedef struct {
-    bool ready;
-    bool ok;
-    uint8_t count;
-    HomeTask tasks[APP_MAX_HOME_TASKS];
-} PendingPayload;
-
 static lv_obj_t * g_lbl_time = NULL;
 static lv_obj_t * g_lbl_date = NULL;
 static lv_obj_t * g_lbl_footer = NULL;
@@ -37,18 +23,10 @@ static lv_obj_t * g_task_list = NULL;
 static TaskCardRefs g_cards[APP_MAX_HOME_TASKS];
 static int32_t g_card_height = 214;
 
-static PendingPayload g_pending = {0};
 static bool g_fetch_inflight = false;
 
 static char g_last_time[16] = {0};
 static char g_last_date[24] = {0};
-
-#ifdef _WIN32
-static CRITICAL_SECTION g_pending_cs;
-static bool g_pending_cs_init = false;
-#else
-static pthread_mutex_t g_pending_mutex = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
 static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
     if (v < lo) {
@@ -72,22 +50,6 @@ static void copy_text_safe(char * dst, size_t dst_len, const char * src) {
 
     strncpy(dst, src, dst_len - 1);
     dst[dst_len - 1] = '\0';
-}
-
-static void pending_lock(void) {
-#ifdef _WIN32
-    EnterCriticalSection(&g_pending_cs);
-#else
-    pthread_mutex_lock(&g_pending_mutex);
-#endif
-}
-
-static void pending_unlock(void) {
-#ifdef _WIN32
-    LeaveCriticalSection(&g_pending_cs);
-#else
-    pthread_mutex_unlock(&g_pending_mutex);
-#endif
 }
 
 static void uppercase_ascii(char * text) {
@@ -210,49 +172,7 @@ static void clock_timer_cb(lv_timer_t * timer) {
     update_clock_labels();
 }
 
-static void apply_pending_payload(void) {
-    PendingPayload copy;
-    memset(&copy, 0, sizeof(copy));
-
-    pending_lock();
-    if (!g_pending.ready) {
-        pending_unlock();
-        return;
-    }
-    copy = g_pending;
-    g_pending.ready = false;
-    pending_unlock();
-
-    app_state_set_tasks_loading(false);
-    if (copy.ok) {
-        app_state_set_home_tasks(copy.tasks, copy.count);
-        app_state_set_status("Due-today refreshed");
-    } else {
-        app_state_set_home_tasks(NULL, 0);
-        app_state_set_status("Could not reach API");
-    }
-
-    render_task_cards();
-    if (g_lbl_footer != NULL) {
-        lv_label_set_text(g_lbl_footer, g_app_state.status_message);
-    }
-
-    g_fetch_inflight = false;
-}
-
-static void pending_timer_cb(lv_timer_t * timer) {
-    (void)timer;
-    apply_pending_payload();
-}
-
-#ifdef _WIN32
-static unsigned __stdcall fetch_due_today_thread(void * arg)
-#else
-static void * fetch_due_today_thread(void * arg)
-#endif
-{
-    (void)arg;
-
+static void fetch_due_today_now(void) {
     HomeApiTask api_tasks[APP_MAX_HOME_TASKS];
     HomeTask ui_tasks[APP_MAX_HOME_TASKS];
     memset(api_tasks, 0, sizeof(api_tasks));
@@ -271,18 +191,19 @@ static void * fetch_due_today_thread(void * arg)
         }
     }
 
-    pending_lock();
-    g_pending.ok = ok;
-    g_pending.count = count;
-    memcpy(g_pending.tasks, ui_tasks, sizeof(ui_tasks));
-    g_pending.ready = true;
-    pending_unlock();
+    app_state_set_tasks_loading(false);
+    if (ok) {
+        app_state_set_home_tasks(ui_tasks, count);
+        app_state_set_status("Due-today refreshed");
+    } else {
+        app_state_set_home_tasks(NULL, 0);
+        app_state_set_status("Could not reach API");
+    }
 
-#ifdef _WIN32
-    return 0;
-#else
-    return NULL;
-#endif
+    render_task_cards();
+    if (g_lbl_footer != NULL) {
+        lv_label_set_text(g_lbl_footer, g_app_state.status_message);
+    }
 }
 
 static void start_due_today_fetch(void) {
@@ -294,25 +215,8 @@ static void start_due_today_fetch(void) {
     app_state_set_tasks_loading(true);
     render_task_cards();
 
-#ifdef _WIN32
-    uintptr_t thread_handle = _beginthreadex(NULL, 0, fetch_due_today_thread, NULL, 0, NULL);
-    if (thread_handle == 0) {
-        g_fetch_inflight = false;
-        app_state_set_tasks_loading(false);
-        app_state_set_status("Task loader unavailable");
-        return;
-    }
-    CloseHandle((HANDLE)thread_handle);
-#else
-    pthread_t worker;
-    if (pthread_create(&worker, NULL, fetch_due_today_thread, NULL) != 0) {
-        g_fetch_inflight = false;
-        app_state_set_tasks_loading(false);
-        app_state_set_status("Task loader unavailable");
-        return;
-    }
-    pthread_detach(worker);
-#endif
+    fetch_due_today_now();
+    g_fetch_inflight = false;
 }
 
 static void refresh_timer_cb(lv_timer_t * timer) {
@@ -419,13 +323,6 @@ lv_obj_t * screen_home_create(void) {
     int32_t task_h = sh - task_y - footer_h - margin;
     task_h = clampi(task_h, 250, sh - 110);
     g_card_height = clampi((task_h * 214) / 332, 182, 230);
-
-#ifdef _WIN32
-    if (!g_pending_cs_init) {
-        InitializeCriticalSection(&g_pending_cs);
-        g_pending_cs_init = true;
-    }
-#endif
 
     lv_obj_t * screen = lv_obj_create(NULL);
     lv_obj_set_size(screen, sw, sh);
@@ -550,7 +447,6 @@ lv_obj_t * screen_home_create(void) {
 
     lv_timer_create(clock_timer_cb, 1000, NULL);
     lv_timer_create(refresh_timer_cb, HOME_API_REFRESH_MS, NULL);
-    lv_timer_create(pending_timer_cb, HOME_API_PENDING_POLL_MS, NULL);
 
     start_due_today_fetch();
 
