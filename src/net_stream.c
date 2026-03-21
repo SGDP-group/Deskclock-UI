@@ -180,3 +180,18 @@ bool net_stream_start(const char * host, uint16_t port) {
     }
     return true;
 }
+
+void net_stream_stop(void) {
+    pthread_mutex_lock(&q_mutex);
+    if (!running) {
+        pthread_mutex_unlock(&q_mutex);
+        return;
+    }
+    running = false;
+    pthread_cond_signal(&q_cv);
+    pthread_mutex_unlock(&q_mutex);
+
+    pthread_join(worker, NULL);
+    close_socket();
+}
+
