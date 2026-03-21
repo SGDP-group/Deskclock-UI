@@ -48,11 +48,32 @@ static LONG WINAPI crash_handler(EXCEPTION_POINTERS * info) {
     }
     g_crash_logging = 1;
 
-    char reason[160];
-    snprintf(reason, sizeof(reason),
-             "Exception code 0x%08lX at address 0x%p",
-             (unsigned long)info->ExceptionRecord->ExceptionCode,
-             info->ExceptionRecord->ExceptionAddress);
+    char reason[256];
+    char module_name[MAX_PATH] = {0};
+    HMODULE module = NULL;
+    DWORD64 offset = 0;
+
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                           GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)info->ExceptionRecord->ExceptionAddress,
+                           &module)) {
+        GetModuleFileNameA(module, module_name, MAX_PATH);
+        offset = (DWORD64)((uintptr_t)info->ExceptionRecord->ExceptionAddress - (uintptr_t)module);
+    }
+
+    if (module_name[0] != '\0') {
+        snprintf(reason, sizeof(reason),
+                 "Exception code 0x%08lX at 0x%p (%s+0x%llX)",
+                 (unsigned long)info->ExceptionRecord->ExceptionCode,
+                 info->ExceptionRecord->ExceptionAddress,
+                 module_name,
+                 (unsigned long long)offset);
+    } else {
+        snprintf(reason, sizeof(reason),
+                 "Exception code 0x%08lX at address 0x%p",
+                 (unsigned long)info->ExceptionRecord->ExceptionCode,
+                 info->ExceptionRecord->ExceptionAddress);
+    }
     write_crash_log(reason);
 
     HANDLE file = CreateFileA("crash.dmp",
