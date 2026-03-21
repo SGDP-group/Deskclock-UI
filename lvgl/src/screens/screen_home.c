@@ -61,6 +61,20 @@ static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
     return v;
 }
 
+static void copy_text_safe(char * dst, size_t dst_len, const char * src) {
+    if (dst == NULL || dst_len == 0) {
+        return;
+    }
+
+    if (src == NULL) {
+        dst[0] = '\0';
+        return;
+    }
+
+    strncpy(dst, src, dst_len - 1);
+    dst[dst_len - 1] = '\0';
+}
+
 static void pending_lock(void) {
 #ifdef _WIN32
     EnterCriticalSection(&g_pending_cs);
@@ -108,12 +122,12 @@ static void update_clock_labels(void) {
 
     if (strcmp(g_last_time, time_buf) != 0) {
         lv_label_set_text(g_lbl_time, time_buf);
-        strncpy(g_last_time, time_buf, sizeof(g_last_time) - 1);
+        copy_text_safe(g_last_time, sizeof(g_last_time), time_buf);
     }
 
     if (strcmp(g_last_date, date_buf) != 0) {
         lv_label_set_text(g_lbl_date, date_buf);
-        strncpy(g_last_date, date_buf, sizeof(g_last_date) - 1);
+        copy_text_safe(g_last_date, sizeof(g_last_date), date_buf);
     }
 }
 
@@ -124,16 +138,22 @@ static void apply_carousel_depth(void) {
 
     g_depth_busy = true;
 
+    if (!lv_obj_is_valid(g_task_list)) {
+        g_depth_busy = false;
+        return;
+    }
+
     int32_t scroll_y = lv_obj_get_scroll_y(g_task_list);
     int32_t center = scroll_y + (lv_obj_get_height(g_task_list) / 2);
     int32_t max_dist = lv_obj_get_height(g_task_list) / 2;
     if (max_dist <= 0) {
+        g_depth_busy = false;
         return;
     }
 
     for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
         lv_obj_t * card = g_cards[i].card;
-        if (card == NULL || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
+        if (card == NULL || !lv_obj_is_valid(card) || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
             continue;
         }
 
@@ -269,10 +289,10 @@ static void * fetch_due_today_thread(void * arg)
         for (uint8_t i = 0; i < count; i++) {
             ui_tasks[i].id = api_tasks[i].id;
             ui_tasks[i].completed = api_tasks[i].completed;
-            strncpy(ui_tasks[i].title, api_tasks[i].title, sizeof(ui_tasks[i].title) - 1);
-            strncpy(ui_tasks[i].subtitle, api_tasks[i].subtitle, sizeof(ui_tasks[i].subtitle) - 1);
-            strncpy(ui_tasks[i].time_range, api_tasks[i].time_range, sizeof(ui_tasks[i].time_range) - 1);
-            strncpy(ui_tasks[i].status, api_tasks[i].status, sizeof(ui_tasks[i].status) - 1);
+            copy_text_safe(ui_tasks[i].title, sizeof(ui_tasks[i].title), api_tasks[i].title);
+            copy_text_safe(ui_tasks[i].subtitle, sizeof(ui_tasks[i].subtitle), api_tasks[i].subtitle);
+            copy_text_safe(ui_tasks[i].time_range, sizeof(ui_tasks[i].time_range), api_tasks[i].time_range);
+            copy_text_safe(ui_tasks[i].status, sizeof(ui_tasks[i].status), api_tasks[i].status);
         }
     }
 
@@ -334,7 +354,10 @@ static void quick_focus_event(lv_event_t * e) {
 }
 
 static void list_scroll_event(lv_event_t * e) {
-    (void)e;
+    lv_obj_t * target = lv_event_get_target(e);
+    if (target == NULL || target != g_task_list) {
+        return;
+    }
     apply_carousel_depth();
 }
 
