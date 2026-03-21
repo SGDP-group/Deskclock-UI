@@ -84,3 +84,74 @@ static int dial_server(void) {
     return fd;
 }
 
+static bool send_all(int fd, const uint8_t * data, size_t len) {
+    size_t sent = 0;
+    while (sent < len) {
+        ssize_t n = send(fd, data + sent, len - sent, 0);
+        if (n > 0) {
+            sent += (size_t)n;
+            continue;
+        }
+        if (n < 0 && (errno == EINTR)) continue;
+        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            usleep(5 * 1000);
+            continue;
+        }
+        return false; /* fatal */
+    }
+    return true;
+}
+
+static void * worker_thread(void * arg) {
+    (void)arg;
+
+    while (running) {
+        pthread_mutex_lock(&q_mutex);
+        while (q_count == 0 && running) {
+            pthread_cond_wait(&q_cv, &q_mutex);
+        }
+        if (!running) {
+            pthread_mutex_unlock(&q_mutex);
+            break;
+        }
+
+        Chunk chunk = queue_buf[q_tail];
+        q_tail = (q_tail + 1) % QUEUE_DEPTH;
+        q_count--;
+        pthread_mutex_unlock(&q_mutex);
+
+        if (sock_fd < 0) {
+            sock_fd = dial_server();
+            if (sock_fd < 0) {
+                LV_LOG_WARN("net_stream: connect failed, retrying");
+                usleep(RECONNECT_BACKOFF_MS * 1000);
+                /* push chunk back to front of queue */
+                pthread_mutex_lock(&q_mutex);
+                if (q_count < QUEUE_DEPTH) {
+                    q_head = (q_head == 0) ? (QUEUE_DEPTH - 1) : (q_head - 1);
+                    queue_buf[q_head] = chunk;
+                    q_count++;
+                }
+                pthread_mutex_unlock(&q_mutex);
+                continue;
+            }
+        }
+
+        if (!send_all(sock_fd, chunk.data, chunk.len)) {
+            LV_LOG_WARN("net_stream: send failed, reconnecting");
+            close_socket();
+            /* requeue the unsent chunk */
+            pthread_mutex_lock(&q_mutex);
+            if (q_count < QUEUE_DEPTH) {
+                q_head = (q_head == 0) ? (QUEUE_DEPTH - 1) : (q_head - 1);
+                queue_buf[q_head] = chunk;
+                q_count++;
+            }
+            pthread_mutex_unlock(&q_mutex);
+            usleep(RECONNECT_BACKOFF_MS * 1000);
+        }
+    }
+
+    close_socket();
+    return NULL;
+}
