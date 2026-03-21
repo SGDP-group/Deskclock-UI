@@ -1,32 +1,19 @@
 #include "screen_home.h"
 #include "lvgl/lvgl.h"
-#include "../styles/theme.h"
 #include "../data/app_state.h"
+#include "src/home_api_client.h"
+#include "src/home_config.h"
+
 #include <ctype.h>
-#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
 #ifdef _WIN32
-#include <winsock2.h>
-#include <windows.h>
-#include <ws2tcpip.h>
 #include <process.h>
-#pragma comment(lib, "ws2_32.lib")
+#include <windows.h>
 #else
 #include <pthread.h>
-#include <sys/socket.h>
-#include <netdb.h>
-#include <unistd.h>
 #endif
-
-#define HOME_API_HOST "127.0.0.1"
-#define HOME_API_PORT 8080
-#define HOME_API_PATH "/api/subtasks/due-today?userId=1"
-
-#define HOME_HTTP_BUF_SIZE 16384
-#define HOME_REFRESH_MS 180000
-#define HOME_PENDING_POLL_MS 250
 
 typedef struct {
     lv_obj_t * card;
@@ -48,17 +35,30 @@ static lv_obj_t * g_lbl_date = NULL;
 static lv_obj_t * g_lbl_footer = NULL;
 static lv_obj_t * g_task_list = NULL;
 static TaskCardRefs g_cards[APP_MAX_HOME_TASKS];
+static int32_t g_card_height = 168;
 
 static PendingPayload g_pending = {0};
 static bool g_fetch_inflight = false;
 
+static char g_last_time[16] = {0};
+static char g_last_date[24] = {0};
+
 #ifdef _WIN32
 static CRITICAL_SECTION g_pending_cs;
 static bool g_pending_cs_init = false;
-static bool g_winsock_init = false;
 #else
 static pthread_mutex_t g_pending_mutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
+
+static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
 
 static void pending_lock(void) {
 #ifdef _WIN32
@@ -109,361 +109,104 @@ static void update_clock_labels(void) {
     strftime(date_buf, sizeof(date_buf), "%a, %d %b", &local_tm);
     uppercase_ascii(date_buf);
 
-    lv_label_set_text(g_lbl_time, time_buf);
-    lv_label_set_text(g_lbl_date, date_buf);
+    if (strcmp(g_last_time, time_buf) != 0) {
+        lv_label_set_text(g_lbl_time, time_buf);
+        strncpy(g_last_time, time_buf, sizeof(g_last_time) - 1);
+    }
+
+    if (strcmp(g_last_date, date_buf) != 0) {
+        lv_label_set_text(g_lbl_date, date_buf);
+        strncpy(g_last_date, date_buf, sizeof(g_last_date) - 1);
+    }
 }
 
-static bool json_get_string(const char * obj, const char * key, char * out, size_t out_len) {
-    if (obj == NULL || key == NULL || out == NULL || out_len == 0) {
-        return false;
-    }
-
-    char needle[48];
-    snprintf(needle, sizeof(needle), "\"%s\"", key);
-    const char * p = strstr(obj, needle);
-    if (p == NULL) {
-        return false;
-    }
-
-    p = strchr(p, ':');
-    if (p == NULL) {
-        return false;
-    }
-    p++;
-
-    while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
-        p++;
-    }
-    if (*p != '"') {
-        return false;
-    }
-    p++;
-
-    size_t idx = 0;
-    while (*p != '\0' && *p != '"' && idx + 1 < out_len) {
-        if (*p == '\\' && *(p + 1) != '\0') {
-            p++;
-        }
-        out[idx++] = *p++;
-    }
-
-    out[idx] = '\0';
-    return idx > 0;
-}
-
-static bool json_get_bool(const char * obj, const char * key, bool * out) {
-    if (obj == NULL || key == NULL || out == NULL) {
-        return false;
-    }
-
-    char needle[48];
-    snprintf(needle, sizeof(needle), "\"%s\"", key);
-    const char * p = strstr(obj, needle);
-    if (p == NULL) {
-        return false;
-    }
-
-    p = strchr(p, ':');
-    if (p == NULL) {
-        return false;
-    }
-    p++;
-
-    while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
-        p++;
-    }
-
-    if (strncmp(p, "true", 4) == 0) {
-        *out = true;
-        return true;
-    }
-    if (strncmp(p, "false", 5) == 0) {
-        *out = false;
-        return true;
-    }
-
-    return false;
-}
-
-static bool json_get_int(const char * obj, const char * key, int * out) {
-    if (obj == NULL || key == NULL || out == NULL) {
-        return false;
-    }
-
-    char needle[48];
-    snprintf(needle, sizeof(needle), "\"%s\"", key);
-    const char * p = strstr(obj, needle);
-    if (p == NULL) {
-        return false;
-    }
-
-    p = strchr(p, ':');
-    if (p == NULL) {
-        return false;
-    }
-    p++;
-
-    while (*p == ' ' || *p == '\n' || *p == '\r' || *p == '\t') {
-        p++;
-    }
-
-    int value = 0;
-    if (sscanf(p, "%d", &value) != 1) {
-        return false;
-    }
-
-    *out = value;
-    return true;
-}
-
-static void format_time_range(const char * start, const char * end, char * out, size_t out_len) {
-    if (out == NULL || out_len == 0) {
+static void apply_carousel_depth(void) {
+    if (g_task_list == NULL) {
         return;
     }
 
-    out[0] = '\0';
-
-    if (start == NULL || end == NULL) {
-        strncpy(out, "No time", out_len - 1);
-        out[out_len - 1] = '\0';
+    int32_t scroll_y = lv_obj_get_scroll_y(g_task_list);
+    int32_t center = scroll_y + (lv_obj_get_height(g_task_list) / 2);
+    int32_t max_dist = lv_obj_get_height(g_task_list) / 2;
+    if (max_dist <= 0) {
         return;
     }
 
-    const char * s = strchr(start, 'T');
-    const char * e = strchr(end, 'T');
-    if (s == NULL || e == NULL || strlen(s) < 6 || strlen(e) < 6) {
-        strncpy(out, "No time", out_len - 1);
-        out[out_len - 1] = '\0';
-        return;
-    }
-
-    snprintf(out, out_len, "%.5s - %.5s", s + 1, e + 1);
-}
-
-static uint8_t parse_due_today_json(const char * body, HomeTask * out_tasks, uint8_t max_tasks) {
-    if (body == NULL || out_tasks == NULL || max_tasks == 0) {
-        return 0;
-    }
-
-    uint8_t count = 0;
-    const char * p = body;
-
-    while (*p != '\0' && count < max_tasks) {
-        const char * obj_start = strchr(p, '{');
-        if (obj_start == NULL) {
-            break;
+    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
+        lv_obj_t * card = g_cards[i].card;
+        if (card == NULL || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
+            continue;
         }
 
-        const char * obj_end = strchr(obj_start, '}');
-        if (obj_end == NULL) {
-            break;
+        int32_t child_mid = lv_obj_get_y(card) + (lv_obj_get_height(card) / 2);
+        int32_t dist = LV_ABS(child_mid - center);
+        if (dist > max_dist) {
+            dist = max_dist;
         }
 
-        size_t obj_len = (size_t)(obj_end - obj_start + 1);
-        if (obj_len > 1023) {
-            obj_len = 1023;
-        }
-
-        char obj_buf[1024];
-        memcpy(obj_buf, obj_start, obj_len);
-        obj_buf[obj_len] = '\0';
-
-        HomeTask * t = &out_tasks[count];
-        memset(t, 0, sizeof(*t));
-
-        json_get_int(obj_buf, "id", &t->id);
-        json_get_bool(obj_buf, "completed", &t->completed);
-
-        if (!json_get_string(obj_buf, "name", t->title, sizeof(t->title))) {
-            json_get_string(obj_buf, "taskName", t->title, sizeof(t->title));
-        }
-        if (!json_get_string(obj_buf, "description", t->subtitle, sizeof(t->subtitle))) {
-            strncpy(t->subtitle, "No description", sizeof(t->subtitle) - 1);
-        }
-        if (!json_get_string(obj_buf, "statusName", t->status, sizeof(t->status))) {
-            strncpy(t->status, t->completed ? "DONE" : "PENDING", sizeof(t->status) - 1);
-        }
-
-        char start_time[40] = {0};
-        char end_time[40] = {0};
-        json_get_string(obj_buf, "startTime", start_time, sizeof(start_time));
-        json_get_string(obj_buf, "endTime", end_time, sizeof(end_time));
-        format_time_range(start_time, end_time, t->time_range, sizeof(t->time_range));
-
-        if (t->title[0] == '\0') {
-            strncpy(t->title, "Untitled task", sizeof(t->title) - 1);
-        }
-
-        count++;
-        p = obj_end + 1;
+        lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER - ((dist * 120) / max_dist));
+        int32_t tx = (dist * 12) / max_dist;
+        lv_obj_set_style_opa(card, opa, LV_PART_MAIN);
+        lv_obj_set_style_translate_x(card, tx, LV_PART_MAIN);
     }
-
-    return count;
-}
-
-static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
-    if (body_out == NULL || body_out_len == 0) {
-        return false;
-    }
-
-    body_out[0] = '\0';
-
-    char request[256];
-    snprintf(request, sizeof(request),
-             "GET %s HTTP/1.1\r\n"
-             "Host: %s\r\n"
-             "Connection: close\r\n"
-             "Accept: application/json\r\n\r\n",
-             HOME_API_PATH, HOME_API_HOST);
-
-    char response[HOME_HTTP_BUF_SIZE];
-    size_t used = 0;
-    response[0] = '\0';
-
-#ifdef _WIN32
-    if (!g_winsock_init) {
-        WSADATA wsa;
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            return false;
-        }
-        g_winsock_init = true;
-    }
-
-    struct addrinfo hints;
-    struct addrinfo * res = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port[8];
-    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
-    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
-        return false;
-    }
-
-    SOCKET sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock == INVALID_SOCKET) {
-        freeaddrinfo(res);
-        return false;
-    }
-
-    if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
-        closesocket(sock);
-        freeaddrinfo(res);
-        return false;
-    }
-    freeaddrinfo(res);
-
-    send(sock, request, (int)strlen(request), 0);
-
-    while (used + 1 < sizeof(response)) {
-        int n = recv(sock, response + used, (int)(sizeof(response) - used - 1), 0);
-        if (n <= 0) {
-            break;
-        }
-        used += (size_t)n;
-    }
-    response[used] = '\0';
-    closesocket(sock);
-#else
-    struct addrinfo hints;
-    struct addrinfo * res = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port[8];
-    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
-    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
-        return false;
-    }
-
-    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock < 0) {
-        freeaddrinfo(res);
-        return false;
-    }
-
-    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
-        close(sock);
-        freeaddrinfo(res);
-        return false;
-    }
-    freeaddrinfo(res);
-
-    send(sock, request, strlen(request), 0);
-
-    while (used + 1 < sizeof(response)) {
-        ssize_t n = recv(sock, response + used, sizeof(response) - used - 1, 0);
-        if (n <= 0) {
-            break;
-        }
-        used += (size_t)n;
-    }
-    response[used] = '\0';
-    close(sock);
-#endif
-
-    const char * body = strstr(response, "\r\n\r\n");
-    if (body == NULL) {
-        return false;
-    }
-    body += 4;
-
-    strncpy(body_out, body, body_out_len - 1);
-    body_out[body_out_len - 1] = '\0';
-    return true;
 }
 
 static void render_loading_card(const char * title, const char * subtitle) {
-    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
-        if (g_cards[i].card != NULL) {
-            if (i == 0) {
-                lv_label_set_text(g_cards[i].title, title);
-                lv_label_set_text(g_cards[i].subtitle, subtitle);
-                lv_label_set_text(g_cards[i].time_range, "");
-                lv_label_set_text(g_cards[i].status, "");
-                lv_obj_clear_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
-            } else {
-                lv_obj_add_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
-            }
-        }
-    }
-}
-
-static void render_task_cards(void) {
-    if (g_app_state.tasks_loading) {
-        render_loading_card("Loading tasks", "Fetching from due-today endpoint");
-        return;
-    }
-
-    if (g_app_state.home_task_count == 0) {
-        render_loading_card("No tasks due", "You are clear for now");
-        return;
-    }
-
     for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
         if (g_cards[i].card == NULL) {
             continue;
         }
 
-        if (i >= g_app_state.home_task_count) {
+        if (i == 0) {
+            lv_label_set_text(g_cards[i].title, title);
+            lv_label_set_text(g_cards[i].subtitle, subtitle);
+            lv_label_set_text(g_cards[i].time_range, "");
+            lv_label_set_text(g_cards[i].status, "");
+            lv_obj_clear_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
+        } else {
             lv_obj_add_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+
+    apply_carousel_depth();
+}
+
+static void render_task_cards(void) {
+    if (g_app_state.tasks_loading) {
+        render_loading_card("Loading tasks", "Checking due-today");
+        return;
+    }
+
+    if (g_app_state.home_task_count == 0) {
+        render_loading_card("No tasks for now", "Enjoy the clear schedule");
+        return;
+    }
+
+    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
+        lv_obj_t * card = g_cards[i].card;
+        if (card == NULL) {
             continue;
         }
 
-        const HomeTask * t = &g_app_state.home_tasks[i];
-        lv_label_set_text(g_cards[i].title, t->title);
-        lv_label_set_text(g_cards[i].subtitle, t->subtitle);
-        lv_label_set_text(g_cards[i].time_range, t->time_range);
-        lv_label_set_text(g_cards[i].status, t->status);
+        if (i >= g_app_state.home_task_count) {
+            lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
+        const HomeTask * task = &g_app_state.home_tasks[i];
+        lv_label_set_text(g_cards[i].title, task->title);
+        lv_label_set_text(g_cards[i].subtitle, task->subtitle);
+        lv_label_set_text(g_cards[i].time_range, task->time_range);
+        lv_label_set_text(g_cards[i].status, task->status);
 
         lv_obj_set_style_text_color(g_cards[i].status,
-                                    t->completed ? lv_color_hex(0x7BE495) : lv_color_hex(0xF9C74F),
+                                    task->completed ? lv_color_hex(0x8EF2A5) : lv_color_hex(0xD8DEE9),
                                     LV_PART_MAIN);
 
-        lv_obj_clear_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
     }
+
+    apply_carousel_depth();
 }
 
 static void clock_timer_cb(lv_timer_t * timer) {
@@ -487,10 +230,10 @@ static void apply_pending_payload(void) {
     app_state_set_tasks_loading(false);
     if (copy.ok) {
         app_state_set_home_tasks(copy.tasks, copy.count);
-        app_state_set_status("Due today updated");
+        app_state_set_status("Due-today refreshed");
     } else {
         app_state_set_home_tasks(NULL, 0);
-        app_state_set_status("Failed to load tasks");
+        app_state_set_status("Could not reach API");
     }
 
     render_task_cards();
@@ -514,20 +257,28 @@ static void * fetch_due_today_thread(void * arg)
 {
     (void)arg;
 
-    char body[HOME_HTTP_BUF_SIZE] = {0};
-    HomeTask tasks[APP_MAX_HOME_TASKS];
-    memset(tasks, 0, sizeof(tasks));
+    HomeApiTask api_tasks[APP_MAX_HOME_TASKS];
+    HomeTask ui_tasks[APP_MAX_HOME_TASKS];
+    memset(api_tasks, 0, sizeof(api_tasks));
+    memset(ui_tasks, 0, sizeof(ui_tasks));
 
-    bool ok = http_fetch_due_today(body, sizeof(body));
-    uint8_t task_count = 0;
+    uint8_t count = 0;
+    bool ok = home_api_fetch_due_today(api_tasks, &count, APP_MAX_HOME_TASKS);
     if (ok) {
-        task_count = parse_due_today_json(body, tasks, APP_MAX_HOME_TASKS);
+        for (uint8_t i = 0; i < count; i++) {
+            ui_tasks[i].id = api_tasks[i].id;
+            ui_tasks[i].completed = api_tasks[i].completed;
+            strncpy(ui_tasks[i].title, api_tasks[i].title, sizeof(ui_tasks[i].title) - 1);
+            strncpy(ui_tasks[i].subtitle, api_tasks[i].subtitle, sizeof(ui_tasks[i].subtitle) - 1);
+            strncpy(ui_tasks[i].time_range, api_tasks[i].time_range, sizeof(ui_tasks[i].time_range) - 1);
+            strncpy(ui_tasks[i].status, api_tasks[i].status, sizeof(ui_tasks[i].status) - 1);
+        }
     }
 
     pending_lock();
     g_pending.ok = ok;
-    g_pending.count = task_count;
-    memcpy(g_pending.tasks, tasks, sizeof(tasks));
+    g_pending.count = count;
+    memcpy(g_pending.tasks, ui_tasks, sizeof(ui_tasks));
     g_pending.ready = true;
     pending_unlock();
 
@@ -557,14 +308,14 @@ static void start_due_today_fetch(void) {
     }
     CloseHandle((HANDLE)thread_handle);
 #else
-    pthread_t t;
-    if (pthread_create(&t, NULL, fetch_due_today_thread, NULL) != 0) {
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, fetch_due_today_thread, NULL) != 0) {
         g_fetch_inflight = false;
         app_state_set_tasks_loading(false);
         app_state_set_status("Task loader unavailable");
         return;
     }
-    pthread_detach(t);
+    pthread_detach(worker);
 #endif
 }
 
@@ -581,63 +332,75 @@ static void quick_focus_event(lv_event_t * e) {
     }
 }
 
+static void list_scroll_event(lv_event_t * e) {
+    (void)e;
+    apply_carousel_depth();
+}
+
 static void create_task_cards(lv_obj_t * parent) {
     for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
         lv_obj_t * card = lv_obj_create(parent);
-        apply_card_style(card);
         lv_obj_set_width(card, lv_pct(100));
-        lv_obj_set_height(card, 116);
-        lv_obj_set_style_pad_left(card, 14, LV_PART_MAIN);
-        lv_obj_set_style_pad_right(card, 14, LV_PART_MAIN);
-        lv_obj_set_style_pad_top(card, 10, LV_PART_MAIN);
-        lv_obj_set_style_pad_bottom(card, 10, LV_PART_MAIN);
+        lv_obj_set_height(card, g_card_height);
+        lv_obj_set_style_bg_color(card, lv_color_hex(0x1B1C21), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(card, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(card, 24, LV_PART_MAIN);
+        lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(card, 26, LV_PART_MAIN);
+        lv_obj_set_style_shadow_opa(card, LV_OPA_40, LV_PART_MAIN);
+        lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), LV_PART_MAIN);
+        lv_obj_set_style_shadow_ofs_y(card, 8, LV_PART_MAIN);
 
-        lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(card, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        lv_obj_t * left_strip = lv_obj_create(card);
+        lv_obj_set_size(left_strip, 14, lv_pct(100));
+        lv_obj_align(left_strip, LV_ALIGN_LEFT_MID, 0, 0);
+        lv_obj_set_style_bg_color(left_strip, lv_color_hex(0x16D1A7), LV_PART_MAIN);
+        lv_obj_set_style_border_width(left_strip, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(left_strip, 12, LV_PART_MAIN);
 
-        lv_obj_t * text_col = lv_obj_create(card);
-        lv_obj_remove_style_all(text_col);
-        lv_obj_set_flex_grow(text_col, 1);
-        lv_obj_set_height(text_col, lv_pct(100));
-        lv_obj_set_layout(text_col, LV_LAYOUT_FLEX);
-        lv_obj_set_flex_flow(text_col, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(text_col, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-        lv_obj_set_style_pad_gap(text_col, 4, LV_PART_MAIN);
+        lv_obj_t * start_slab = lv_obj_create(card);
+        lv_obj_set_size(start_slab, 120, lv_pct(100));
+        lv_obj_align(start_slab, LV_ALIGN_RIGHT_MID, 0, 0);
+        lv_obj_set_style_bg_color(start_slab, lv_color_hex(0x08A874), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(start_slab, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_set_style_border_width(start_slab, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(start_slab, 24, LV_PART_MAIN);
 
-        lv_obj_t * title = lv_label_create(text_col);
-        lv_obj_set_width(title, lv_pct(100));
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
-        lv_obj_set_style_text_color(title, lv_color_hex(0xF5F5F5), LV_PART_MAIN);
-        lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-
-        lv_obj_t * subtitle = lv_label_create(text_col);
-        lv_obj_set_width(subtitle, lv_pct(100));
-        lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_14, LV_PART_MAIN);
-        lv_obj_set_style_text_color(subtitle, lv_color_hex(0xBDBDBD), LV_PART_MAIN);
-        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
-
-        lv_obj_t * time_range = lv_label_create(text_col);
-        lv_obj_set_style_text_font(time_range, &lv_font_montserrat_14, LV_PART_MAIN);
-        lv_obj_set_style_text_color(time_range, lv_color_hex(0x70D6FF), LV_PART_MAIN);
-
-        lv_obj_t * right_col = lv_obj_create(card);
-        lv_obj_remove_style_all(right_col);
-        lv_obj_set_width(right_col, 84);
-        lv_obj_set_height(right_col, lv_pct(100));
-        lv_obj_set_layout(right_col, LV_LAYOUT_FLEX);
-        lv_obj_set_flex_flow(right_col, LV_FLEX_FLOW_COLUMN);
-        lv_obj_set_flex_align(right_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_gap(right_col, 6, LV_PART_MAIN);
-
-        lv_obj_t * start_btn = lv_btn_create(right_col);
-        apply_primary_btn_style(start_btn);
-        lv_obj_set_size(start_btn, 78, 52);
-        lv_obj_t * start_lbl = lv_label_create(start_btn);
+        lv_obj_t * start_lbl = lv_label_create(start_slab);
         lv_label_set_text(start_lbl, "START");
+        lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+        lv_obj_set_style_text_color(start_lbl, lv_color_hex(0xF4FBF7), LV_PART_MAIN);
         lv_obj_center(start_lbl);
 
-        lv_obj_t * status = lv_label_create(right_col);
+        lv_obj_t * content = lv_obj_create(card);
+        lv_obj_remove_style_all(content);
+        lv_obj_set_size(content, lv_pct(65), lv_pct(100));
+        lv_obj_align(content, LV_ALIGN_LEFT_MID, 26, 0);
+
+        lv_obj_t * title = lv_label_create(content);
+        lv_obj_set_width(title, lv_pct(100));
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
+        lv_obj_set_style_text_color(title, lv_color_hex(0xF3F4F7), LV_PART_MAIN);
+        lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 14);
+
+        lv_obj_t * subtitle = lv_label_create(content);
+        lv_obj_set_width(subtitle, lv_pct(100));
+        lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_24, LV_PART_MAIN);
+        lv_obj_set_style_text_color(subtitle, lv_color_hex(0xC3C7CF), LV_PART_MAIN);
+        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
+        lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 78);
+
+        lv_obj_t * time_range = lv_label_create(content);
+        lv_obj_set_style_text_font(time_range, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_style_text_color(time_range, lv_color_hex(0xA0C9D5), LV_PART_MAIN);
+        lv_obj_align(time_range, LV_ALIGN_BOTTOM_LEFT, 0, -20);
+
+        lv_obj_t * status = lv_label_create(content);
         lv_obj_set_style_text_font(status, &lv_font_montserrat_14, LV_PART_MAIN);
+        lv_obj_set_style_text_color(status, lv_color_hex(0xA8E7B4), LV_PART_MAIN);
+        lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -4);
 
         g_cards[i].card = card;
         g_cards[i].title = title;
@@ -648,70 +411,126 @@ static void create_task_cards(lv_obj_t * parent) {
 }
 
 lv_obj_t * screen_home_create(void) {
+    lv_display_t * disp = lv_display_get_default();
+    int32_t sw = lv_display_get_horizontal_resolution(disp);
+    int32_t sh = lv_display_get_vertical_resolution(disp);
+
+    int32_t margin = clampi(sw / 48, 10, 18);
+    int32_t header_h = clampi(sh / 4, 106, 136);
+    int32_t footer_h = 22;
+    int32_t task_y = margin + header_h;
+    int32_t task_h = sh - task_y - footer_h - margin;
+    task_h = clampi(task_h, 220, sh - 110);
+    g_card_height = clampi((task_h * 62) / 100, 132, 178);
+
     lv_obj_t * screen = lv_obj_create(NULL);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x08090D), LV_PART_MAIN);
-    lv_obj_set_style_pad_all(screen, 12, LV_PART_MAIN);
-    lv_obj_set_layout(screen, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(screen, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(screen, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_gap(screen, 10, LV_PART_MAIN);
+    lv_obj_set_size(screen, sw, sh);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x050608), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x101216), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
-    lv_obj_t * header = lv_obj_create(screen);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_width(header, lv_pct(100));
-    lv_obj_set_height(header, 124);
-    lv_obj_set_layout(header, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(header, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_t * time_col = lv_obj_create(screen);
+    lv_obj_remove_style_all(time_col);
+    lv_obj_set_size(time_col, sw * 58 / 100, header_h);
+    lv_obj_set_pos(time_col, margin, margin);
 
-    lv_obj_t * left_col = lv_obj_create(header);
-    lv_obj_remove_style_all(left_col);
-    lv_obj_set_width(left_col, lv_pct(56));
-    lv_obj_set_height(left_col, lv_pct(100));
-    lv_obj_set_layout(left_col, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(left_col, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(left_col, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_gap(left_col, 2, LV_PART_MAIN);
-
-    g_lbl_time = lv_label_create(left_col);
+    g_lbl_time = lv_label_create(time_col);
     lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF3F4F6), LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
+    lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
-    g_lbl_date = lv_label_create(left_col);
+    g_lbl_date = lv_label_create(time_col);
     lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(0xB8BDC7), LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(0xD3D7DD), LV_PART_MAIN);
+    lv_obj_align(g_lbl_date, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
-    lv_obj_t * quick_btn = lv_btn_create(header);
-    apply_primary_btn_style(quick_btn);
-    lv_obj_set_width(quick_btn, lv_pct(40));
-    lv_obj_set_height(quick_btn, 86);
+    lv_obj_t * quick_btn = lv_btn_create(screen);
+    lv_obj_set_size(quick_btn, clampi(sw * 33 / 100, 190, 230), clampi(header_h - 18, 72, 96));
+    lv_obj_set_pos(quick_btn, sw - lv_obj_get_width(quick_btn) - margin, margin);
+    lv_obj_set_style_bg_opa(quick_btn, LV_OPA_15, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(quick_btn, lv_color_hex(0x1B1E25), LV_PART_MAIN);
+    lv_obj_set_style_border_width(quick_btn, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(quick_btn, lv_color_hex(0x3B4048), LV_PART_MAIN);
+    lv_obj_set_style_radius(quick_btn, 18, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(quick_btn, 14, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_35, LV_PART_MAIN);
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
+
     lv_obj_t * quick_lbl = lv_label_create(quick_btn);
-    lv_label_set_text(quick_lbl, "Quick Focus");
+    lv_label_set_text(quick_lbl, LV_SYMBOL_PLAY "  Quick Focus");
     lv_obj_set_style_text_font(quick_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(quick_lbl, lv_color_hex(0xDFE3EA), LV_PART_MAIN);
     lv_obj_center(quick_lbl);
 
+    lv_obj_t * layer_back = lv_obj_create(screen);
+    lv_obj_set_size(layer_back, sw - (margin * 5), task_h - 20);
+    lv_obj_set_pos(layer_back, margin * 2, task_y + 12);
+    lv_obj_set_style_bg_color(layer_back, lv_color_hex(0x202935), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(layer_back, LV_OPA_35, LV_PART_MAIN);
+    lv_obj_set_style_border_width(layer_back, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
+
+    lv_obj_t * layer_mid = lv_obj_create(screen);
+    lv_obj_set_size(layer_mid, sw - (margin * 4), task_h - 10);
+    lv_obj_set_pos(layer_mid, margin * 3, task_y + 5);
+    lv_obj_set_style_bg_color(layer_mid, lv_color_hex(0x141920), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(layer_mid, LV_OPA_55, LV_PART_MAIN);
+    lv_obj_set_style_border_width(layer_mid, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(layer_mid, 22, LV_PART_MAIN);
+
     g_task_list = lv_obj_create(screen);
-    lv_obj_set_width(g_task_list, lv_pct(100));
-    lv_obj_set_flex_grow(g_task_list, 1);
-    lv_obj_set_style_pad_all(g_task_list, 8, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(g_task_list, lv_color_hex(0x0F1117), LV_PART_MAIN);
-    lv_obj_set_style_border_color(g_task_list, lv_color_hex(0x1F2937), LV_PART_MAIN);
-    lv_obj_set_style_border_width(g_task_list, 1, LV_PART_MAIN);
-    lv_obj_set_style_radius(g_task_list, 14, LV_PART_MAIN);
-    lv_obj_set_style_pad_gap(g_task_list, 10, LV_PART_MAIN);
+    lv_obj_set_size(g_task_list, sw - (margin * 2), task_h);
+    lv_obj_set_pos(g_task_list, margin, task_y);
+    lv_obj_set_style_bg_opa(g_task_list, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_task_list, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(g_task_list, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(g_task_list, 10, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(g_task_list, clampi((task_h - g_card_height) / 2, 24, 58), LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(g_task_list, clampi((task_h - g_card_height) / 2, 24, 58), LV_PART_MAIN);
+    lv_obj_set_style_pad_gap(g_task_list, 12, LV_PART_MAIN);
     lv_obj_set_scroll_dir(g_task_list, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(g_task_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_scroll_snap_y(g_task_list, LV_SCROLL_SNAP_CENTER);
+    lv_obj_set_scrollbar_mode(g_task_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_layout(g_task_list, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(g_task_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(g_task_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+    lv_obj_add_event_cb(g_task_list, list_scroll_event, LV_EVENT_SCROLL, NULL);
 
     create_task_cards(g_task_list);
 
+    lv_obj_t * indicator = lv_obj_create(screen);
+    lv_obj_remove_style_all(indicator);
+    lv_obj_set_size(indicator, 12, 78);
+    lv_obj_set_pos(sw - margin - 8, task_y + (task_h / 2) - 39);
+
+    lv_obj_t * dot_top = lv_obj_create(indicator);
+    lv_obj_set_size(dot_top, 6, 6);
+    lv_obj_set_style_radius(dot_top, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dot_top, lv_color_hex(0xE7EBEF), LV_PART_MAIN);
+    lv_obj_set_style_border_width(dot_top, 0, LV_PART_MAIN);
+    lv_obj_align(dot_top, LV_ALIGN_TOP_MID, 0, 0);
+
+    lv_obj_t * bar = lv_obj_create(indicator);
+    lv_obj_set_size(bar, 8, 36);
+    lv_obj_set_style_radius(bar, 4, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0xEDF1F5), LV_PART_MAIN);
+    lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN);
+    lv_obj_align(bar, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t * dot_bottom = lv_obj_create(indicator);
+    lv_obj_set_size(dot_bottom, 6, 6);
+    lv_obj_set_style_radius(dot_bottom, 3, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(dot_bottom, lv_color_hex(0xD4DAE0), LV_PART_MAIN);
+    lv_obj_set_style_border_width(dot_bottom, 0, LV_PART_MAIN);
+    lv_obj_align(dot_bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
+
     g_lbl_footer = lv_label_create(screen);
     lv_obj_set_style_text_font(g_lbl_footer, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_footer, lv_color_hex(0x8D99AE), LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_footer, lv_color_hex(0x848C99), LV_PART_MAIN);
+    lv_obj_set_pos(g_lbl_footer, margin, sh - footer_h);
     lv_label_set_text(g_lbl_footer, "Ready");
 
     g_lbl_status = g_lbl_footer;
@@ -722,8 +541,8 @@ lv_obj_t * screen_home_create(void) {
     render_task_cards();
 
     lv_timer_create(clock_timer_cb, 1000, NULL);
-    lv_timer_create(refresh_timer_cb, HOME_REFRESH_MS, NULL);
-    lv_timer_create(pending_timer_cb, HOME_PENDING_POLL_MS, NULL);
+    lv_timer_create(refresh_timer_cb, HOME_API_REFRESH_MS, NULL);
+    lv_timer_create(pending_timer_cb, HOME_API_PENDING_POLL_MS, NULL);
 
     start_due_today_fetch();
 
