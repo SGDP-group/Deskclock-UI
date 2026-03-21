@@ -14,6 +14,7 @@ add_compile_definitions(
     LV_FONT_MONTSERRAT_14=1
     LV_FONT_MONTSERRAT_24=1
     LV_FONT_MONTSERRAT_48=1
+    LV_FONT_MONTSERRAT_56=1
 
     # Enable SDL2 driver for Windows development
     # On Pi, swap this for LV_USE_LINUX_FBDEV=1 (see Section 14)
@@ -22,6 +23,9 @@ add_compile_definitions(
     LV_SDL_VER_RES=480
 
     LV_USE_LOG=1
+
+    LV_USE_ASSERT_NULL=1
+    LV_USE_ASSERT_MALLOC=1
 )
 
 include_directories(${CMAKE_SOURCE_DIR})
@@ -29,8 +33,13 @@ include_directories(${CMAKE_SOURCE_DIR})
 # Add LVGL — in v9 this is the only submodule you need
 add_subdirectory(lvgl)
 
-# Collect all your source files from src/
-file(GLOB_RECURSE APP_SOURCES "src/*.c")
+# App-level sources live outside the vendored lvgl/ directory by design.
+# Keep this explicit so new files are never skipped by stale CMake globs.
+set(APP_SOURCES
+    src/home_api_client.c
+    src/net_stream.c
+    src/fonts/Antonio_bold_56.c
+)
 
 add_executable(lvgl_app
     main.c
@@ -57,4 +66,7 @@ if(WIN32)
         list(REMOVE_ITEM LVGL_LIBS "SDL2main")
         set_target_properties(lvgl::lvgl PROPERTIES INTERFACE_LINK_LIBRARIES "${LVGL_LIBS}")
     endif()
+
+    target_link_libraries(lvgl_app ws2_32)
+    target_link_libraries(lvgl_app dbghelp)
 endif()
