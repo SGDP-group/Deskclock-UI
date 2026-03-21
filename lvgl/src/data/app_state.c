@@ -58,3 +58,24 @@ void app_state_set_loading(bool loading) {
         }
     }
 }
+
+void app_state_set_tasks_loading(bool loading) {
+    g_app_state.tasks_loading = loading;
+}
+
+void app_state_set_home_tasks(const HomeTask * tasks, uint8_t count) {
+    uint8_t bounded_count = count;
+    if (bounded_count > APP_MAX_HOME_TASKS) {
+        bounded_count = APP_MAX_HOME_TASKS;
+    }
+
+    g_app_state.home_task_count = bounded_count;
+
+    if (tasks == NULL || bounded_count == 0) {
+        memset(g_app_state.home_tasks, 0, sizeof(g_app_state.home_tasks));
+        return;
+    }
+
+    memset(g_app_state.home_tasks, 0, sizeof(g_app_state.home_tasks));
+    memcpy(g_app_state.home_tasks, tasks, sizeof(HomeTask) * bounded_count);
+}
