@@ -449,14 +449,14 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_t * quick_btn = lv_btn_create(screen);
     lv_obj_set_size(quick_btn, clampi(sw * 33 / 100, 190, 230), clampi(header_h - 18, 72, 96));
     lv_obj_set_pos(quick_btn, sw - lv_obj_get_width(quick_btn) - margin, margin);
-    lv_obj_set_style_bg_opa(quick_btn, LV_OPA_15, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(quick_btn, LV_OPA_10, LV_PART_MAIN);
     lv_obj_set_style_bg_color(quick_btn, lv_color_hex(0x1B1E25), LV_PART_MAIN);
     lv_obj_set_style_border_width(quick_btn, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(quick_btn, lv_color_hex(0x3B4048), LV_PART_MAIN);
     lv_obj_set_style_radius(quick_btn, 18, LV_PART_MAIN);
     lv_obj_set_style_shadow_width(quick_btn, 14, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x000000), LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_35, LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_30, LV_PART_MAIN);
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * quick_lbl = lv_label_create(quick_btn);
@@ -477,7 +477,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_size(layer_mid, sw - (margin * 4), task_h - 10);
     lv_obj_set_pos(layer_mid, margin * 3, task_y + 5);
     lv_obj_set_style_bg_color(layer_mid, lv_color_hex(0x141920), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(layer_mid, LV_OPA_55, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(layer_mid, LV_OPA_50, LV_PART_MAIN);
     lv_obj_set_style_border_width(layer_mid, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(layer_mid, 22, LV_PART_MAIN);
 
@@ -504,7 +504,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_t * indicator = lv_obj_create(screen);
     lv_obj_remove_style_all(indicator);
     lv_obj_set_size(indicator, 12, 78);
-    lv_obj_set_pos(sw - margin - 8, task_y + (task_h / 2) - 39);
+    lv_obj_set_pos(indicator, sw - margin - 8, task_y + (task_h / 2) - 39);
 
     lv_obj_t * dot_top = lv_obj_create(indicator);
     lv_obj_set_size(dot_top, 6, 6);
