@@ -195,3 +195,26 @@ void net_stream_stop(void) {
     close_socket();
 }
 
+bool net_stream_enqueue(const void * data, size_t len) {
+    if (!running || data == NULL || len == 0) return false;
+
+    if (len > MAX_CHUNK) len = MAX_CHUNK; /* trim to keep RAM bounded */
+
+    pthread_mutex_lock(&q_mutex);
+    if (q_count >= QUEUE_DEPTH) {
+        pthread_mutex_unlock(&q_mutex);
+        return false; /* queue full */
+    }
+
+    Chunk * c = &queue_buf[q_head];
+    memcpy(c->data, data, len);
+    c->len = len;
+
+    q_head = (q_head + 1) % QUEUE_DEPTH;
+    q_count++;
+    pthread_cond_signal(&q_cv);
+    pthread_mutex_unlock(&q_mutex);
+    return true;
+}
+
+#endif /* _WIN32 */
