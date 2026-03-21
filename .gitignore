@@ -1,0 +1,41 @@
+# Build directories
+build/
+build-*/
+cmake-build-*/
+out/
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+Makefile
+CTestTestfile.cmake
+Testing/
+compile_commands.json
+
+# Ninja (if generator changes)
+.ninja_deps
+.ninja_log
+build.ninja
+
+# Compiled binaries and objects
+*.exe
+*.dll
+*.a
+*.lib
+*.o
+*.obj
+*.pdb
+*.ilk
+lvgl_app
+
+# Runtime/storage files
+app_data.conf
+
+# VS Code
+.vscode/
+
+# OS files
+Thumbs.db
+.DS_Store
