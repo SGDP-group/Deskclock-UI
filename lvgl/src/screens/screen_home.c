@@ -469,7 +469,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_size(layer_back, sw - (margin * 5), task_h - 20);
     lv_obj_set_pos(layer_back, margin * 2, task_y + 12);
     lv_obj_set_style_bg_color(layer_back, lv_color_hex(0x202935), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(layer_back, LV_OPA_35, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(layer_back, LV_OPA_30, LV_PART_MAIN);
     lv_obj_set_style_border_width(layer_back, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
 
