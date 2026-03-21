@@ -22,6 +22,9 @@ add_compile_definitions(
     LV_SDL_VER_RES=480
 
     LV_USE_LOG=1
+
+    LV_USE_ASSERT_NULL=1
+    LV_USE_ASSERT_MALLOC=1
 )
 
 include_directories(${CMAKE_SOURCE_DIR})
@@ -59,4 +62,5 @@ if(WIN32)
     endif()
 
     target_link_libraries(lvgl_app ws2_32)
+    target_link_libraries(lvgl_app dbghelp)
 endif()
