@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
@@ -18,6 +19,52 @@
 #define HOME_HTTP_BUF_SIZE 16384
 
 static bool g_winsock_ready = false;
+
+static void build_due_today_path(char * path, size_t path_len) {
+    if (path == NULL || path_len == 0) {
+        return;
+    }
+
+    time_t now = time(NULL);
+    struct tm local_tm;
+#ifdef _WIN32
+    localtime_s(&local_tm, &now);
+#else
+    localtime_r(&now, &local_tm);
+#endif
+
+    char date_buf[16] = {0};
+    char time_buf[16] = {0};
+    strftime(date_buf, sizeof(date_buf), "%Y-%m-%d", &local_tm);
+    strftime(time_buf, sizeof(time_buf), "%H%M%S", &local_tm);
+
+    long tz_offset_minutes = 0;
+#ifdef _WIN32
+    TIME_ZONE_INFORMATION tzi;
+    DWORD tz_id = GetTimeZoneInformation(&tzi);
+    long bias = tzi.Bias;
+    if (tz_id == TIME_ZONE_ID_DAYLIGHT) {
+        bias += tzi.DaylightBias;
+    } else if (tz_id == TIME_ZONE_ID_STANDARD) {
+        bias += tzi.StandardBias;
+    }
+    tz_offset_minutes = -bias;
+#else
+    struct tm gmt_tm;
+    gmtime_r(&now, &gmt_tm);
+    time_t local_epoch = mktime(&local_tm);
+    time_t gmt_as_local_epoch = mktime(&gmt_tm);
+    tz_offset_minutes = (long)(difftime(local_epoch, gmt_as_local_epoch) / 60.0);
+#endif
+
+    snprintf(path, path_len,
+             "/api/subtasks/due-today?userId=%d&deviceDate=%s&deviceTime=%s&deviceEpoch=%lld&tzOffsetMinutes=%ld",
+             HOME_API_USER_ID,
+             date_buf,
+             time_buf,
+             (long long)now,
+             tz_offset_minutes);
+}
 
 static void copy_text_safe(char * dst, size_t dst_len, const char * src) {
     if (dst == NULL || dst_len == 0) {
@@ -230,10 +277,10 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
 
     body_out[0] = '\0';
 
-    char path[96];
-    snprintf(path, sizeof(path), "/api/subtasks/due-today?userId=%d", HOME_API_USER_ID);
+    char path[256];
+    build_due_today_path(path, sizeof(path));
 
-    char request[256];
+    char request[512];
     snprintf(request, sizeof(request),
              "GET %s HTTP/1.1\r\n"
              "Host: %s\r\n"
