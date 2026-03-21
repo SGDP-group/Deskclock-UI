@@ -204,7 +204,6 @@ static void fetch_due_today_now(void) {
     app_state_set_tasks_loading(false);
     if (ok) {
         app_state_set_home_tasks(ui_tasks, count);
-        app_state_set_status("Due-today refreshed");
     } else {
         app_state_set_home_tasks(NULL, 0);
         app_state_set_status("Could not reach API");
@@ -348,7 +347,7 @@ lv_obj_t * screen_home_create(void) {
     g_lbl_time = lv_label_create(time_col);
     lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_56, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(g_lbl_time, 2, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(g_lbl_time, 35, LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
     g_lbl_date = lv_label_create(time_col);
