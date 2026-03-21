@@ -57,4 +57,6 @@ if(WIN32)
         list(REMOVE_ITEM LVGL_LIBS "SDL2main")
         set_target_properties(lvgl::lvgl PROPERTIES INTERFACE_LINK_LIBRARIES "${LVGL_LIBS}")
     endif()
+
+    target_link_libraries(lvgl_app ws2_32)
 endif()
