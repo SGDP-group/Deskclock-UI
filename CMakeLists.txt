@@ -14,6 +14,7 @@ add_compile_definitions(
     LV_FONT_MONTSERRAT_14=1
     LV_FONT_MONTSERRAT_24=1
     LV_FONT_MONTSERRAT_48=1
+    LV_FONT_MONTSERRAT_56=1
 
     # Enable SDL2 driver for Windows development
     # On Pi, swap this for LV_USE_LINUX_FBDEV=1 (see Section 14)
