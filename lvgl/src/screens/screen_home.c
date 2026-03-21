@@ -8,7 +8,7 @@
 #include <string.h>
 #include <time.h>
 
-extern const lv_font_t Antonio_bold_64;
+extern const lv_font_t Antonio_bold_56;
 
 
 typedef struct {
@@ -82,7 +82,7 @@ static void update_clock_labels(void) {
     char time_buf[16] = {0};
     char date_buf[24] = {0};
 
-    strftime(time_buf, sizeof(time_buf), "%H:%M", &local_tm);
+    strftime(time_buf, sizeof(time_buf), "%H :%M", &local_tm);
     strftime(date_buf, sizeof(date_buf), "%a, %d %b", &local_tm);
     uppercase_ascii(date_buf);
 
@@ -346,9 +346,9 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_pos(time_col, time_x, time_y);
 
     g_lbl_time = lv_label_create(time_col);
-    lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_64, LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_56, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(g_lbl_time, 6, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(g_lbl_time, 2, LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
     g_lbl_date = lv_label_create(time_col);
