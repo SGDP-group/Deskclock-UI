@@ -844,9 +844,8 @@ lv_font_t Antonio_bold_56 = {
     .fallback = &lv_font_montserrat_48,
 #endif
     .user_data = NULL,
-#if LVGL_VERSION_MAJOR < 9
 };
-#endif
+};
 
 
 
