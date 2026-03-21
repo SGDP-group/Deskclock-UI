@@ -35,10 +35,11 @@ static lv_obj_t * g_lbl_date = NULL;
 static lv_obj_t * g_lbl_footer = NULL;
 static lv_obj_t * g_task_list = NULL;
 static TaskCardRefs g_cards[APP_MAX_HOME_TASKS];
-static int32_t g_card_height = 168;
+static int32_t g_card_height = 214;
 
 static PendingPayload g_pending = {0};
 static bool g_fetch_inflight = false;
+static bool g_depth_busy = false;
 
 static char g_last_time[16] = {0};
 static char g_last_date[24] = {0};
@@ -62,10 +63,6 @@ static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
 
 static void pending_lock(void) {
 #ifdef _WIN32
-    if (!g_pending_cs_init) {
-        InitializeCriticalSection(&g_pending_cs);
-        g_pending_cs_init = true;
-    }
     EnterCriticalSection(&g_pending_cs);
 #else
     pthread_mutex_lock(&g_pending_mutex);
@@ -121,9 +118,11 @@ static void update_clock_labels(void) {
 }
 
 static void apply_carousel_depth(void) {
-    if (g_task_list == NULL) {
+    if (g_task_list == NULL || g_depth_busy) {
         return;
     }
+
+    g_depth_busy = true;
 
     int32_t scroll_y = lv_obj_get_scroll_y(g_task_list);
     int32_t center = scroll_y + (lv_obj_get_height(g_task_list) / 2);
@@ -145,10 +144,12 @@ static void apply_carousel_depth(void) {
         }
 
         lv_opa_t opa = (lv_opa_t)(LV_OPA_COVER - ((dist * 120) / max_dist));
-        int32_t tx = (dist * 12) / max_dist;
+        int32_t tx = (dist * 8) / max_dist;
         lv_obj_set_style_opa(card, opa, LV_PART_MAIN);
         lv_obj_set_style_translate_x(card, tx, LV_PART_MAIN);
     }
+
+    g_depth_busy = false;
 }
 
 static void render_loading_card(const char * title, const char * subtitle) {
@@ -342,30 +343,32 @@ static void create_task_cards(lv_obj_t * parent) {
         lv_obj_t * card = lv_obj_create(parent);
         lv_obj_set_width(card, lv_pct(100));
         lv_obj_set_height(card, g_card_height);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x1B1C21), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A1A), LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_color(card, lv_color_hex(0x191919), LV_PART_MAIN);
+        lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_VER, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_width(card, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(card, 24, LV_PART_MAIN);
+        lv_obj_set_style_radius(card, 30, LV_PART_MAIN);
         lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-        lv_obj_set_style_shadow_width(card, 26, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(card, 36, LV_PART_MAIN);
         lv_obj_set_style_shadow_opa(card, LV_OPA_40, LV_PART_MAIN);
         lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), LV_PART_MAIN);
-        lv_obj_set_style_shadow_ofs_y(card, 8, LV_PART_MAIN);
+        lv_obj_set_style_shadow_ofs_y(card, 12, LV_PART_MAIN);
 
         lv_obj_t * left_strip = lv_obj_create(card);
-        lv_obj_set_size(left_strip, 14, lv_pct(100));
+        lv_obj_set_size(left_strip, 16, lv_pct(100));
         lv_obj_align(left_strip, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_bg_color(left_strip, lv_color_hex(0x16D1A7), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(left_strip, lv_color_hex(0x10B981), LV_PART_MAIN);
         lv_obj_set_style_border_width(left_strip, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(left_strip, 12, LV_PART_MAIN);
+        lv_obj_set_style_radius(left_strip, LV_RADIUS_CIRCLE, LV_PART_MAIN);
 
         lv_obj_t * start_slab = lv_obj_create(card);
         lv_obj_set_size(start_slab, 120, lv_pct(100));
         lv_obj_align(start_slab, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_bg_color(start_slab, lv_color_hex(0x08A874), LV_PART_MAIN);
+        lv_obj_set_style_bg_color(start_slab, lv_color_hex(0x09A672), LV_PART_MAIN);
         lv_obj_set_style_bg_opa(start_slab, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_width(start_slab, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(start_slab, 24, LV_PART_MAIN);
+        lv_obj_set_style_radius(start_slab, 28, LV_PART_MAIN);
 
         lv_obj_t * start_lbl = lv_label_create(start_slab);
         lv_label_set_text(start_lbl, "START");
@@ -375,32 +378,32 @@ static void create_task_cards(lv_obj_t * parent) {
 
         lv_obj_t * content = lv_obj_create(card);
         lv_obj_remove_style_all(content);
-        lv_obj_set_size(content, lv_pct(65), lv_pct(100));
-        lv_obj_align(content, LV_ALIGN_LEFT_MID, 26, 0);
+        lv_obj_set_size(content, lv_pct(66), lv_pct(100));
+        lv_obj_align(content, LV_ALIGN_LEFT_MID, 18, 0);
 
         lv_obj_t * title = lv_label_create(content);
         lv_obj_set_width(title, lv_pct(100));
         lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
         lv_obj_set_style_text_color(title, lv_color_hex(0xF3F4F7), LV_PART_MAIN);
         lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 14);
+        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 22);
 
         lv_obj_t * subtitle = lv_label_create(content);
         lv_obj_set_width(subtitle, lv_pct(100));
         lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_24, LV_PART_MAIN);
         lv_obj_set_style_text_color(subtitle, lv_color_hex(0xC3C7CF), LV_PART_MAIN);
         lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
-        lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 78);
+        lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 108);
 
         lv_obj_t * time_range = lv_label_create(content);
         lv_obj_set_style_text_font(time_range, &lv_font_montserrat_14, LV_PART_MAIN);
         lv_obj_set_style_text_color(time_range, lv_color_hex(0xA0C9D5), LV_PART_MAIN);
-        lv_obj_align(time_range, LV_ALIGN_BOTTOM_LEFT, 0, -20);
+        lv_obj_align(time_range, LV_ALIGN_BOTTOM_LEFT, 0, -28);
 
         lv_obj_t * status = lv_label_create(content);
         lv_obj_set_style_text_font(status, &lv_font_montserrat_14, LV_PART_MAIN);
         lv_obj_set_style_text_color(status, lv_color_hex(0xA8E7B4), LV_PART_MAIN);
-        lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -4);
+        lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -10);
 
         g_cards[i].card = card;
         g_cards[i].title = title;
@@ -415,26 +418,33 @@ lv_obj_t * screen_home_create(void) {
     int32_t sw = lv_display_get_horizontal_resolution(disp);
     int32_t sh = lv_display_get_vertical_resolution(disp);
 
-    int32_t margin = clampi(sw / 48, 10, 18);
-    int32_t header_h = clampi(sh / 4, 106, 136);
+    int32_t margin = clampi(sw / 48, 12, 28);
+    int32_t header_h = clampi((sh * 148) / 480, 120, 156);
     int32_t footer_h = 22;
     int32_t task_y = margin + header_h;
     int32_t task_h = sh - task_y - footer_h - margin;
-    task_h = clampi(task_h, 220, sh - 110);
-    g_card_height = clampi((task_h * 62) / 100, 132, 178);
+    task_h = clampi(task_h, 250, sh - 110);
+    g_card_height = clampi((task_h * 214) / 332, 182, 230);
+
+#ifdef _WIN32
+    if (!g_pending_cs_init) {
+        InitializeCriticalSection(&g_pending_cs);
+        g_pending_cs_init = true;
+    }
+#endif
 
     lv_obj_t * screen = lv_obj_create(NULL);
     lv_obj_set_size(screen, sw, sh);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x050608), LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x101216), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0C0C0C), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x060606), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t * time_col = lv_obj_create(screen);
     lv_obj_remove_style_all(time_col);
-    lv_obj_set_size(time_col, sw * 58 / 100, header_h);
-    lv_obj_set_pos(time_col, margin, margin);
+    lv_obj_set_size(time_col, clampi((sw * 350) / 640, 280, 360), header_h);
+    lv_obj_set_pos(time_col, clampi((sw * 28) / 640, 12, 28), clampi((sh * 18) / 480, 10, 20));
 
     g_lbl_time = lv_label_create(time_col);
     lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
@@ -447,14 +457,18 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_align(g_lbl_date, LV_ALIGN_BOTTOM_LEFT, 0, 0);
 
     lv_obj_t * quick_btn = lv_btn_create(screen);
-    lv_obj_set_size(quick_btn, clampi(sw * 33 / 100, 190, 230), clampi(header_h - 18, 72, 96));
-    lv_obj_set_pos(quick_btn, sw - lv_obj_get_width(quick_btn) - margin, margin);
+    lv_obj_set_size(quick_btn, clampi((sw * 236) / 640, 200, 236), clampi((sh * 106) / 480, 84, 106));
+    lv_obj_set_pos(quick_btn,
+                   sw - lv_obj_get_width(quick_btn) - clampi((sw * 20) / 640, 10, 20),
+                   clampi((sh * 18) / 480, 10, 20));
     lv_obj_set_style_bg_opa(quick_btn, LV_OPA_10, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(quick_btn, lv_color_hex(0x1B1E25), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(quick_btn, lv_color_hex(0x1D1D1D), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(quick_btn, lv_color_hex(0x151515), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(quick_btn, LV_GRAD_DIR_VER, LV_PART_MAIN);
     lv_obj_set_style_border_width(quick_btn, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(quick_btn, lv_color_hex(0x3B4048), LV_PART_MAIN);
     lv_obj_set_style_radius(quick_btn, 18, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(quick_btn, 14, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(quick_btn, 24, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_30, LV_PART_MAIN);
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
@@ -466,16 +480,16 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_center(quick_lbl);
 
     lv_obj_t * layer_back = lv_obj_create(screen);
-    lv_obj_set_size(layer_back, sw - (margin * 5), task_h - 20);
-    lv_obj_set_pos(layer_back, margin * 2, task_y + 12);
+    lv_obj_set_size(layer_back, sw - clampi((sw * 80) / 640, 42, 80), task_h - 20);
+    lv_obj_set_pos(layer_back, clampi((sw * 38) / 640, 20, 38), task_y + 14);
     lv_obj_set_style_bg_color(layer_back, lv_color_hex(0x202935), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(layer_back, LV_OPA_30, LV_PART_MAIN);
     lv_obj_set_style_border_width(layer_back, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
 
     lv_obj_t * layer_mid = lv_obj_create(screen);
-    lv_obj_set_size(layer_mid, sw - (margin * 4), task_h - 10);
-    lv_obj_set_pos(layer_mid, margin * 3, task_y + 5);
+    lv_obj_set_size(layer_mid, sw - clampi((sw * 60) / 640, 30, 60), task_h - 10);
+    lv_obj_set_pos(layer_mid, clampi((sw * 52) / 640, 26, 52), task_y + 8);
     lv_obj_set_style_bg_color(layer_mid, lv_color_hex(0x141920), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(layer_mid, LV_OPA_50, LV_PART_MAIN);
     lv_obj_set_style_border_width(layer_mid, 0, LV_PART_MAIN);
@@ -486,42 +500,42 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_pos(g_task_list, margin, task_y);
     lv_obj_set_style_bg_opa(g_task_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(g_task_list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(g_task_list, 10, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(g_task_list, 10, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(g_task_list, clampi((task_h - g_card_height) / 2, 24, 58), LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(g_task_list, clampi((task_h - g_card_height) / 2, 24, 58), LV_PART_MAIN);
-    lv_obj_set_style_pad_gap(g_task_list, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(g_task_list, clampi((sw * 40) / 640, 18, 40), LV_PART_MAIN);
+    lv_obj_set_style_pad_right(g_task_list, clampi((sw * 40) / 640, 18, 40), LV_PART_MAIN);
+    lv_obj_set_style_pad_top(g_task_list, clampi((task_h - g_card_height) / 2, 28, 62), LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(g_task_list, clampi((task_h - g_card_height) / 2, 28, 62), LV_PART_MAIN);
+    lv_obj_set_style_pad_gap(g_task_list, clampi((sh * 44) / 480, 24, 44), LV_PART_MAIN);
     lv_obj_set_scroll_dir(g_task_list, LV_DIR_VER);
     lv_obj_set_scroll_snap_y(g_task_list, LV_SCROLL_SNAP_CENTER);
     lv_obj_set_scrollbar_mode(g_task_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_layout(g_task_list, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(g_task_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(g_task_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-    lv_obj_add_event_cb(g_task_list, list_scroll_event, LV_EVENT_SCROLL, NULL);
+    lv_obj_add_event_cb(g_task_list, list_scroll_event, LV_EVENT_SCROLL_END, NULL);
 
     create_task_cards(g_task_list);
 
     lv_obj_t * indicator = lv_obj_create(screen);
     lv_obj_remove_style_all(indicator);
-    lv_obj_set_size(indicator, 12, 78);
-    lv_obj_set_pos(indicator, sw - margin - 8, task_y + (task_h / 2) - 39);
+    lv_obj_set_size(indicator, 10, 88);
+    lv_obj_set_pos(indicator, sw - clampi((sw * 12) / 640, 8, 12), task_y + (task_h / 2) - 44);
 
     lv_obj_t * dot_top = lv_obj_create(indicator);
-    lv_obj_set_size(dot_top, 6, 6);
+    lv_obj_set_size(dot_top, 7, 7);
     lv_obj_set_style_radius(dot_top, 3, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dot_top, lv_color_hex(0xE7EBEF), LV_PART_MAIN);
     lv_obj_set_style_border_width(dot_top, 0, LV_PART_MAIN);
     lv_obj_align(dot_top, LV_ALIGN_TOP_MID, 0, 0);
 
     lv_obj_t * bar = lv_obj_create(indicator);
-    lv_obj_set_size(bar, 8, 36);
+    lv_obj_set_size(bar, 7, 38);
     lv_obj_set_style_radius(bar, 4, LV_PART_MAIN);
     lv_obj_set_style_bg_color(bar, lv_color_hex(0xEDF1F5), LV_PART_MAIN);
     lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN);
     lv_obj_align(bar, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t * dot_bottom = lv_obj_create(indicator);
-    lv_obj_set_size(dot_bottom, 6, 6);
+    lv_obj_set_size(dot_bottom, 7, 7);
     lv_obj_set_style_radius(dot_bottom, 3, LV_PART_MAIN);
     lv_obj_set_style_bg_color(dot_bottom, lv_color_hex(0xD4DAE0), LV_PART_MAIN);
     lv_obj_set_style_border_width(dot_bottom, 0, LV_PART_MAIN);
