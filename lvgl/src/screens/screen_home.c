@@ -16,11 +16,13 @@ typedef struct {
     lv_obj_t * status;
 } TaskCardRefs;
 
+#define HOME_CARD_POOL_SIZE 6
+
 static lv_obj_t * g_lbl_time = NULL;
 static lv_obj_t * g_lbl_date = NULL;
 static lv_obj_t * g_lbl_footer = NULL;
 static lv_obj_t * g_task_list = NULL;
-static TaskCardRefs g_cards[APP_MAX_HOME_TASKS];
+static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static int32_t g_card_height = 214;
 
 static bool g_fetch_inflight = false;
@@ -98,7 +100,7 @@ static void apply_carousel_depth(void) {
     }
 
     /* Keep cards at stable styles while debugging AV during scroll. */
-    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
+    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
         lv_obj_t * card = g_cards[i].card;
         if (card == NULL || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
             continue;
@@ -110,7 +112,7 @@ static void apply_carousel_depth(void) {
 }
 
 static void render_loading_card(const char * title, const char * subtitle) {
-    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
+    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
         if (g_cards[i].card == NULL) {
             continue;
         }
@@ -140,13 +142,18 @@ static void render_task_cards(void) {
         return;
     }
 
-    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
+    uint8_t visible_count = g_app_state.home_task_count;
+    if (visible_count > HOME_CARD_POOL_SIZE) {
+        visible_count = HOME_CARD_POOL_SIZE;
+    }
+
+    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
         lv_obj_t * card = g_cards[i].card;
         if (card == NULL) {
             continue;
         }
 
-        if (i >= g_app_state.home_task_count) {
+        if (i >= visible_count) {
             lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
             continue;
         }
@@ -179,7 +186,7 @@ static void fetch_due_today_now(void) {
     memset(ui_tasks, 0, sizeof(ui_tasks));
 
     uint8_t count = 0;
-    bool ok = home_api_fetch_due_today(api_tasks, &count, APP_MAX_HOME_TASKS);
+    bool ok = home_api_fetch_due_today(api_tasks, &count, HOME_CARD_POOL_SIZE);
     if (ok) {
         for (uint8_t i = 0; i < count; i++) {
             ui_tasks[i].id = api_tasks[i].id;
@@ -237,21 +244,16 @@ static void list_scroll_event(lv_event_t * e) {
 }
 
 static void create_task_cards(lv_obj_t * parent) {
-    for (uint8_t i = 0; i < APP_MAX_HOME_TASKS; i++) {
+    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
         lv_obj_t * card = lv_obj_create(parent);
         lv_obj_set_width(card, lv_pct(100));
         lv_obj_set_height(card, g_card_height);
         lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A1A), LV_PART_MAIN);
-        lv_obj_set_style_bg_grad_color(card, lv_color_hex(0x191919), LV_PART_MAIN);
-        lv_obj_set_style_bg_grad_dir(card, LV_GRAD_DIR_VER, LV_PART_MAIN);
         lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
         lv_obj_set_style_border_width(card, 0, LV_PART_MAIN);
         lv_obj_set_style_radius(card, 30, LV_PART_MAIN);
         lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-        lv_obj_set_style_shadow_width(card, 36, LV_PART_MAIN);
-        lv_obj_set_style_shadow_opa(card, LV_OPA_40, LV_PART_MAIN);
-        lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), LV_PART_MAIN);
-        lv_obj_set_style_shadow_ofs_y(card, 12, LV_PART_MAIN);
+        lv_obj_set_style_shadow_width(card, 0, LV_PART_MAIN);
 
         lv_obj_t * left_strip = lv_obj_create(card);
         lv_obj_set_size(left_strip, 16, lv_pct(100));
@@ -377,6 +379,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_bg_opa(layer_back, LV_OPA_30, LV_PART_MAIN);
     lv_obj_set_style_border_width(layer_back, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
+    lv_obj_add_flag(layer_back, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t * layer_mid = lv_obj_create(screen);
     lv_obj_set_size(layer_mid, sw - clampi((sw * 60) / 640, 30, 60), task_h - 10);
@@ -385,6 +388,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_bg_opa(layer_mid, LV_OPA_50, LV_PART_MAIN);
     lv_obj_set_style_border_width(layer_mid, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(layer_mid, 22, LV_PART_MAIN);
+    lv_obj_add_flag(layer_mid, LV_OBJ_FLAG_HIDDEN);
 
     g_task_list = lv_obj_create(screen);
     lv_obj_set_size(g_task_list, sw - (margin * 2), task_h);
