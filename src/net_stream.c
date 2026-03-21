@@ -155,3 +155,28 @@ static void * worker_thread(void * arg) {
     close_socket();
     return NULL;
 }
+
+bool net_stream_start(const char * host, uint16_t port) {
+    if (!host || port == 0) return false;
+
+    pthread_mutex_lock(&q_mutex);
+    if (running) {
+        pthread_mutex_unlock(&q_mutex);
+        return true; /* already running */
+    }
+
+    strncpy(target_host, host, sizeof(target_host) - 1);
+    target_host[sizeof(target_host) - 1] = '\0';
+    target_port = port;
+
+    q_head = q_tail = q_count = 0;
+    running = true;
+    int rc = pthread_create(&worker, NULL, worker_thread, NULL);
+    pthread_mutex_unlock(&q_mutex);
+
+    if (rc != 0) {
+        running = false;
+        return false;
+    }
+    return true;
+}
