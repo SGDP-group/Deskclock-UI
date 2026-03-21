@@ -800,8 +800,8 @@ static lv_font_fmt_txt_dsc_t font_dsc = {
     .glyph_bitmap = glyph_bitmap,
     .glyph_dsc = glyph_dsc,
     .cmaps = cmaps,
-    .kern_dsc = &kern_pairs,
-    .kern_scale = 16,
+    .kern_dsc = NULL,
+    .kern_scale = 0,
     .cmap_num = 1,
     .bpp = 1,
     .kern_classes = 0,
@@ -844,7 +844,6 @@ lv_font_t Antonio_bold_56 = {
     .fallback = &lv_font_montserrat_48,
 #endif
     .user_data = NULL,
-};
 };
 
 
