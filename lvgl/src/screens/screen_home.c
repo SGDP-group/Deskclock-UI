@@ -10,6 +10,7 @@
 
 extern const lv_font_t Antonio_bold_80;
 
+
 typedef struct {
     lv_obj_t * card;
     lv_obj_t * title;
@@ -347,7 +348,7 @@ lv_obj_t * screen_home_create(void) {
     g_lbl_time = lv_label_create(time_col);
     lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_80, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(g_lbl_time, 4, LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(g_lbl_time, 6, LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
     g_lbl_date = lv_label_create(time_col);
