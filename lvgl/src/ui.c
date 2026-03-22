@@ -27,8 +27,8 @@ void ui_init(void) {
     load_screen(screen_home_create());
 }
 
-void ui_navigate_focus_session(const char * title, uint32_t duration_seconds) {
-    load_screen(screen_focus_session_create(title, duration_seconds));
+void ui_navigate_focus_session(const char * title, uint32_t duration_seconds, bool is_quick_session) {
+    load_screen(screen_focus_session_create(title, duration_seconds, is_quick_session));
 }
 
 void ui_navigate_home(void) {
