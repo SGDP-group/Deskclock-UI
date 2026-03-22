@@ -25,6 +25,7 @@ FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
 
 #include <errno.h>
 #include <fcntl.h>
+#include <jpeglib.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -38,6 +39,8 @@ FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
 #define CAPTURE_HEIGHT 480
 #define CAPTURE_BUFFER_COUNT 4
 #define V4L2_TIMEOUT_SEC 2
+#define JPEG_QUALITY 70
+#define JPEG_MAX_BYTES (256 * 1024)
 
 typedef struct {
     void * start;
@@ -55,6 +58,9 @@ typedef struct {
     uint32_t frames_sent;
     uint32_t capture_failures;
     uint32_t send_failures;
+    uint32_t v4l2_pixfmt;
+    uint32_t width;
+    uint32_t height;
     char last_error[96];
     MmapBuffer buffers[CAPTURE_BUFFER_COUNT];
     uint32_t buffer_count;
@@ -71,6 +77,9 @@ static CaptureState s_capture = {
     .frames_sent = 0,
     .capture_failures = 0,
     .send_failures = 0,
+    .v4l2_pixfmt = 0,
+    .width = CAPTURE_WIDTH,
+    .height = CAPTURE_HEIGHT,
     .buffer_count = 0,
     .lock = PTHREAD_MUTEX_INITIALIZER,
 };
@@ -85,6 +94,115 @@ static uint64_t now_ms(void) {
     struct timespec ts;
     clock_gettime(CLOCK_REALTIME, &ts);
     return ((uint64_t)ts.tv_sec * 1000ULL) + ((uint64_t)ts.tv_nsec / 1000000ULL);
+}
+
+static uint8_t clamp_u8(int v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return (uint8_t)v;
+}
+
+static void yuv_to_rgb(uint8_t y, int u, int v, uint8_t * r, uint8_t * g, uint8_t * b) {
+    int c = (int)y - 16;
+    int d = u - 128;
+    int e = v - 128;
+
+    int rr = (298 * c + 409 * e + 128) >> 8;
+    int gg = (298 * c - 100 * d - 208 * e + 128) >> 8;
+    int bb = (298 * c + 516 * d + 128) >> 8;
+
+    *r = clamp_u8(rr);
+    *g = clamp_u8(gg);
+    *b = clamp_u8(bb);
+}
+
+static bool encode_yuyv_to_jpeg(const uint8_t * yuyv,
+                                uint32_t width,
+                                uint32_t height,
+                                uint8_t * jpeg_out,
+                                size_t jpeg_cap,
+                                size_t * jpeg_len_out) {
+    if (yuyv == NULL || jpeg_out == NULL || jpeg_len_out == NULL || width == 0 || height == 0) {
+        return false;
+    }
+
+    struct jpeg_compress_struct cinfo;
+    struct jpeg_error_mgr jerr;
+    JSAMPROW row_pointer[1];
+    unsigned char * mem = NULL;
+    unsigned long mem_len = 0;
+
+    uint8_t * rgb_row = (uint8_t *)malloc((size_t)width * 3U);
+    if (rgb_row == NULL) {
+        return false;
+    }
+
+    cinfo.err = jpeg_std_error(&jerr);
+    jpeg_create_compress(&cinfo);
+    jpeg_mem_dest(&cinfo, &mem, &mem_len);
+
+    cinfo.image_width = width;
+    cinfo.image_height = height;
+    cinfo.input_components = 3;
+    cinfo.in_color_space = JCS_RGB;
+
+    jpeg_set_defaults(&cinfo);
+    jpeg_set_quality(&cinfo, JPEG_QUALITY, TRUE);
+    jpeg_start_compress(&cinfo, TRUE);
+
+    while (cinfo.next_scanline < cinfo.image_height) {
+        uint32_t y = cinfo.next_scanline;
+        const uint8_t * src = yuyv + ((size_t)y * width * 2U);
+
+        for (uint32_t x = 0; x < width; x += 2U) {
+            uint8_t y0 = src[0];
+            uint8_t u = src[1];
+            uint8_t y1 = src[2];
+            uint8_t v = src[3];
+
+            yuv_to_rgb(y0, u, v, &rgb_row[(size_t)x * 3U + 0U], &rgb_row[(size_t)x * 3U + 1U], &rgb_row[(size_t)x * 3U + 2U]);
+            if (x + 1U < width) {
+                yuv_to_rgb(y1, u, v, &rgb_row[(size_t)(x + 1U) * 3U + 0U], &rgb_row[(size_t)(x + 1U) * 3U + 1U], &rgb_row[(size_t)(x + 1U) * 3U + 2U]);
+            }
+
+            src += 4;
+        }
+
+        row_pointer[0] = rgb_row;
+        jpeg_write_scanlines(&cinfo, row_pointer, 1);
+    }
+
+    jpeg_finish_compress(&cinfo);
+
+    bool ok = false;
+    if (mem != NULL && mem_len > 0 && mem_len <= jpeg_cap) {
+        memcpy(jpeg_out, mem, (size_t)mem_len);
+        *jpeg_len_out = (size_t)mem_len;
+        ok = true;
+    }
+
+    if (mem != NULL) {
+        free(mem);
+    }
+    jpeg_destroy_compress(&cinfo);
+    free(rgb_row);
+
+    return ok;
+}
+
+static bool camera_supports_format(uint32_t pixfmt) {
+    struct v4l2_fmtdesc fmtdesc;
+    memset(&fmtdesc, 0, sizeof(fmtdesc));
+    fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    while (ioctl(s_capture.fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
+        if (fmtdesc.pixelformat == pixfmt) {
+            return true;
+        }
+        fmtdesc.index++;
+    }
+
+    return false;
 }
 
 static bool camera_open(void) {
@@ -110,17 +228,31 @@ static bool camera_open(void) {
         return false;
     }
 
+    uint32_t requested_pixfmt = 0;
+    if (camera_supports_format(V4L2_PIX_FMT_MJPEG)) {
+        requested_pixfmt = V4L2_PIX_FMT_MJPEG;
+    } else if (camera_supports_format(V4L2_PIX_FMT_YUYV)) {
+        requested_pixfmt = V4L2_PIX_FMT_YUYV;
+    } else {
+        set_capture_error("camera lacks MJPEG/YUYV format");
+        return false;
+    }
+
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     fmt.fmt.pix.width = CAPTURE_WIDTH;
     fmt.fmt.pix.height = CAPTURE_HEIGHT;
-    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
+    fmt.fmt.pix.pixelformat = requested_pixfmt;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
 
     if (ioctl(s_capture.fd, VIDIOC_S_FMT, &fmt) < 0) {
-        set_capture_error("VIDIOC_S_FMT MJPEG failed");
+        set_capture_error("VIDIOC_S_FMT failed");
         return false;
     }
+
+    s_capture.v4l2_pixfmt = fmt.fmt.pix.pixelformat;
+    s_capture.width = fmt.fmt.pix.width;
+    s_capture.height = fmt.fmt.pix.height;
 
     memset(&parm, 0, sizeof(parm));
     parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -236,10 +368,34 @@ static bool capture_and_send_frame(void) {
     bool sent = false;
     if (buf.index < s_capture.buffer_count && buf.bytesused > 0) {
         s_capture.frames_captured++;
-        sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
-                                            (size_t)buf.bytesused,
-                                            now_ms(),
-                                            s_capture.seq++);
+
+        if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_MJPEG) {
+            sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                                (size_t)buf.bytesused,
+                                                now_ms(),
+                                                s_capture.seq++);
+        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
+            uint8_t jpeg_buf[JPEG_MAX_BYTES];
+            size_t jpeg_len = 0;
+
+            if (encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                    s_capture.width,
+                                    s_capture.height,
+                                    jpeg_buf,
+                                    sizeof(jpeg_buf),
+                                    &jpeg_len)) {
+                sent = focus_image_stream_send_jpeg(jpeg_buf, jpeg_len, now_ms(), s_capture.seq++);
+            } else {
+                s_capture.capture_failures++;
+                set_capture_error("YUYV->JPEG encode failed");
+                sent = false;
+            }
+        } else {
+            s_capture.capture_failures++;
+            set_capture_error("unsupported capture pixel format");
+            sent = false;
+        }
+
         if (sent) {
             s_capture.frames_sent++;
             set_capture_error("ok");

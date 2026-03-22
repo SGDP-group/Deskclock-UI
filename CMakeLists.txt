@@ -67,6 +67,11 @@ add_executable(lvgl_app
 find_package(Threads REQUIRED)
 target_link_libraries(lvgl_app lvgl::lvgl Threads::Threads)
 
+if(NOT WIN32)
+    find_package(JPEG REQUIRED)
+    target_link_libraries(lvgl_app JPEG::JPEG)
+endif()
+
 # On Windows with MinGW, also link SDL2 and its entry-point shim
 if(WIN32)
     find_package(SDL2 REQUIRED)
