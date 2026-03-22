@@ -428,8 +428,6 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
     lv_obj_add_flag(layer_back, LV_OBJ_FLAG_HIDDEN);
 
-    /* Store the pointer so app_state.c can update this label from anywhere */
-    g_lbl_status = status_lbl;
     lv_obj_t * layer_mid = lv_obj_create(screen);
     lv_obj_set_size(layer_mid, sw - clampi((sw * 60) / 640, 30, 60), task_h - 10);
     lv_obj_set_pos(layer_mid, clampi((sw * 52) / 640, 26, 52), task_y + 8);
