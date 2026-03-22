@@ -31,6 +31,7 @@ if(WIN32)
 else()
     add_compile_definitions(
         LV_USE_LINUX_FBDEV=1
+        LV_USE_EVDEV=1
     )
 endif()
 
