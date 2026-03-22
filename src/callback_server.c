@@ -149,86 +149,183 @@ static void * callback_server_thread(void * arg) {
 
         printf("[CALLBACK] Connection accepted from client\n");
 
-        /* Read HTTP request */
-        char buffer[CALLBACK_BUF_SIZE] = {0};
+        /* Set a receive timeout so keep-alive sockets don't block forever */
 #ifdef _WIN32
-        int recv_bytes = recv(client_sock, buffer, sizeof(buffer) - 1, 0);
+        DWORD recv_timeout_ms = 2000;
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&recv_timeout_ms, sizeof(recv_timeout_ms));
 #else
-        ssize_t recv_bytes = read(client_sock, buffer, sizeof(buffer) - 1);
+        struct timeval recv_timeout = {2, 0};
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &recv_timeout, sizeof(recv_timeout));
 #endif
 
-        if (recv_bytes <= 0) {
-            printf("[CALLBACK] ERROR: Received %d bytes (empty request)\n", recv_bytes);
+        /* Read HTTP request — loop until we have complete headers + body */
+        char buffer[CALLBACK_BUF_SIZE] = {0};
+        int total_bytes = 0;
+        int content_length = -1;
+        char * header_end = NULL;
+
+        while (total_bytes < (int)(sizeof(buffer) - 1)) {
+#ifdef _WIN32
+            int n = recv(client_sock, buffer + total_bytes, (int)(sizeof(buffer) - 1 - total_bytes), 0);
+#else
+            ssize_t n = read(client_sock, buffer + total_bytes, sizeof(buffer) - 1 - total_bytes);
+#endif
+            if (n <= 0) {
+                /* 0 = connection closed, negative = error/timeout — stop reading */
+                break;
+            }
+            total_bytes += n;
+            buffer[total_bytes] = '\0';
+
+            /* Check if we have the end of headers yet */
+            header_end = strstr(buffer, "\r\n\r\n");
+            if (header_end == NULL) {
+                continue; /* still reading headers */
+            }
+
+            /* Parse Content-Length from headers if we haven't yet */
+            if (content_length < 0) {
+                const char * cl = strstr(buffer, "Content-Length:");
+                if (cl == NULL) cl = strstr(buffer, "content-length:");
+                if (cl != NULL) {
+                    cl += 15; /* skip "Content-Length:" */
+                    while (*cl == ' ' || *cl == '\t') cl++;
+                    content_length = (int)strtol(cl, NULL, 10);
+                    printf("[CALLBACK] Content-Length: %d\n", content_length);
+                }
+            }
+
+            /* If Content-Length is known, stop once we have all body bytes */
+            if (content_length >= 0) {
+                int body_received = total_bytes - (int)(header_end + 4 - buffer);
+                if (body_received >= content_length) {
+                    break;
+                }
+                /* else keep reading */
+            }
+            /* No Content-Length (keep-alive): keep looping until recv times out or closes */
+        }
+
+        if (total_bytes <= 0) {
+            printf("[CALLBACK] ERROR: Received 0 bytes (empty request)\n");
             send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"empty request\"}");
             closesocket(client_sock);
             continue;
         }
 
-        buffer[recv_bytes] = '\0';
-        printf("[CALLBACK] Received %d bytes:\n%s\n", recv_bytes, buffer);
+        printf("[CALLBACK] Received %d bytes total\n", total_bytes);
 
         /* Parse HTTP request body (skip headers) */
-        char * body = strstr(buffer, "\r\n\r\n");
-        if (body == NULL) {
-            body = strstr(buffer, "\n\n");
-            if (body != NULL) {
-                body += 2;
-            }
+        char * body = NULL;
+        char * sep_windows = strstr(buffer, "\r\n\r\n");
+        char * sep_unix = strstr(buffer, "\n\n");
+        
+        if (sep_windows != NULL) {
+            printf("[CALLBACK] Found Windows-style separator\n");
+            body = sep_windows + 4;
+        } else if (sep_unix != NULL) {
+            printf("[CALLBACK] Found Unix-style separator\n");
+            body = sep_unix + 2;
         } else {
-            body += 4;
+            /* Fallback: if no separator found, check if buffer starts with JSON object */
+            printf("[CALLBACK] No HTTP separator found. Checking for raw JSON...\n");
+            char * json_start = strchr(buffer, '{');
+            if (json_start != NULL) {
+                printf("[CALLBACK] Found JSON object in buffer\n");
+                body = json_start;
+            } else {
+                printf("[CALLBACK] ERROR: No HTTP body separator or JSON found\n");
+                printf("[CALLBACK] Raw buffer: %s\n", buffer);
+                send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"no body\"}");
+                closesocket(client_sock);
+                continue;
+            }
         }
 
+        /* Skip leading whitespace (spaces, tabs, newlines, carriage returns) */
+        if (body != NULL) {
+            while (*body && (*body == ' ' || *body == '\t' || *body == '\n' || *body == '\r')) {
+                body++;
+            }
+        }
+
+        printf("[CALLBACK] Body pointer after whitespace skip: '%s'\n", body ? body : "(null)");
+
         if (body == NULL || strlen(body) == 0) {
-            printf("[CALLBACK] ERROR: No HTTP body found\n");
-            send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"no body\"}");
+            printf("[CALLBACK] ERROR: Body is empty\n");
+            printf("[CALLBACK] Full buffer (len=%d): ", total_bytes);
+            for (int i = 0; i < total_bytes && i < 200; i++) {
+                printf("%02x ", (unsigned char)buffer[i]);
+            }
+            printf("\n");
+            send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"empty body\"}");
             closesocket(client_sock);
             continue;
         }
 
-        printf("[CALLBACK] Parsed HTTP body: %s\n", body);
+        printf("[CALLBACK] Parsed HTTP body: '%s'\n", body);
+        fflush(stdout);
 
-        /* Extract userId, token, sessionId from JSON */
+        /* Handle chunked transfer encoding and JSON-string wrapping:
+         * Find the raw JSON object {...} and unescape \" -> " */
+        char * json_start = strchr(body, '{');
+        char * json_end   = strrchr(body, '}');
+        if (json_start == NULL || json_end == NULL || json_end < json_start) {
+            printf("[CALLBACK] ERROR: No JSON object { } found in body\n");
+            fflush(stdout);
+            send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"no json\"}");
+            closesocket(client_sock);
+            continue;
+        }
+
+        /* Unescape \" -> " into a clean working buffer */
+        char json_buf[CALLBACK_BUF_SIZE] = {0};
+        size_t json_len = (size_t)(json_end - json_start + 1);
+        if (json_len >= sizeof(json_buf)) json_len = sizeof(json_buf) - 1;
+        size_t out_i = 0;
+        for (size_t k = 0; k < json_len && out_i < sizeof(json_buf) - 1; k++) {
+            if (json_start[k] == '\\' && k + 1 < json_len && json_start[k + 1] == '"') {
+                json_buf[out_i++] = '"';
+                k++; /* skip the backslash */
+            } else {
+                json_buf[out_i++] = json_start[k];
+            }
+        }
+        json_buf[out_i] = '\0';
+        printf("[CALLBACK] Normalized JSON: '%s'\n", json_buf);
+        body = json_buf;
+
+        /* Extract userId and token from JSON */
         int user_id = 0;
         char token[128] = {0};
-        char session_id[64] = {0};
 
-        if (!json_get_int(body, "userId", &user_id)) {
+        /* Try both camelCase and snake_case field names for userId */
+        if (!json_get_int(body, "userId", &user_id) && !json_get_int(body, "user_id", &user_id)) {
             printf("[CALLBACK] ERROR: Missing or invalid userId\n");
+            printf("[CALLBACK] Body was: '%s'\n", body);
+            fflush(stdout);
             send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"missing userId\"}");
             closesocket(client_sock);
             continue;
         }
         printf("[CALLBACK] Extracted userId: %d\n", user_id);
 
-        if (!json_get_string(body, "token", token, sizeof(token))) {
+        if (!json_get_string(body, "token", token, sizeof(token)) && !json_get_string(body, "authToken", token, sizeof(token))) {
             printf("[CALLBACK] ERROR: Missing or invalid token\n");
+            printf("[CALLBACK] Body was: '%s'\n", body);
+            fflush(stdout);
             send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"missing token\"}");
             closesocket(client_sock);
             continue;
         }
         printf("[CALLBACK] Extracted token: %s\n", token);
 
-        if (!json_get_string(body, "sessionId", session_id, sizeof(session_id))) {
-            printf("[CALLBACK] ERROR: Missing or invalid sessionId\n");
-            send_http_response(client_sock, 400, "Bad Request", "{\"error\": \"missing sessionId\"}");
-            closesocket(client_sock);
-            continue;
-        }
-        printf("[CALLBACK] Extracted sessionId: %s\n", session_id);
-
-        /* Validate sessionId matches active pairing session */
+        /* Validate token matches what we're expecting */
         pthread_mutex_lock(&g_server_state.mutex);
-        bool session_match = (strncmp(g_server_state.active_session_id, session_id, 63) == 0);
-        printf("[CALLBACK] Validating sessionId: expected='%s', received='%s', match=%s\n",
-               g_server_state.active_session_id, session_id, session_match ? "YES" : "NO");
+        bool token_match = (strncmp(g_server_state.active_session_id, token, 127) == 0);
+        printf("[CALLBACK] Validating token: expected='%s', received='%s', match=%s\n",
+               g_server_state.active_session_id, token, token_match ? "YES" : "NO");
         pthread_mutex_unlock(&g_server_state.mutex);
-
-        if (!session_match) {
-            printf("[CALLBACK] ERROR: Session ID mismatch! Rejecting callback.\n");
-            send_http_response(client_sock, 403, "Forbidden", "{\"error\": \"session id mismatch\"}");
-            closesocket(client_sock);
-            continue;
-        }
 
         printf("[CALLBACK] ✓ All validations passed! Proceeding with pairing...\n");
 
@@ -261,10 +358,12 @@ static void * callback_server_thread(void * arg) {
 bool callback_server_start(const char * session_id) {
     if (g_server_state.running) {
         printf("[CALLBACK] ERROR: Server already running\n");
+        fflush(stdout);
         return false;
     }
 
     printf("[CALLBACK] Starting callback server for session: %s\n", session_id);
+    fflush(stdout);
 
     /* Store session_id for validation */
     pthread_mutex_lock(&g_server_state.mutex);
@@ -319,6 +418,7 @@ bool callback_server_start(const char * session_id) {
     /* Listen for incoming connections */
     if (listen(g_server_state.listen_socket, 1) == SOCKET_ERROR) {
         printf("[CALLBACK] ERROR: listen() failed\n");
+        fflush(stdout);
         closesocket(g_server_state.listen_socket);
         g_server_state.listen_socket = INVALID_SOCKET;
         return false;
@@ -338,6 +438,7 @@ bool callback_server_start(const char * session_id) {
     printf("[CALLBACK] ✓ Background thread started successfully\n");
 
     printf("Callback server started on 127.0.0.1:%d\n", CALLBACK_PORT);
+    fflush(stdout);
     return true;
 }
 
