@@ -4,6 +4,7 @@
 #include "../data/app_state.h"
 #include "src/home_config.h"
 #include "src/focus_image_stream.h"
+#include "src/focus_camera_capture.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -107,6 +108,7 @@ static void cleanup_countdown_timer(void) {
 }
 
 static void stop_and_return_home(void) {
+    focus_camera_capture_stop();
     focus_image_stream_stop();
     cleanup_countdown_timer();
     ui_navigate_home();
@@ -124,6 +126,7 @@ static void start_focus_seconds(uint32_t seconds, bool bonus_focus) {
     }
 
     set_controls_for_focus(true);
+    focus_camera_capture_set_paused(false);
     focus_image_stream_set_paused(false);
     app_state_set_status("Session running");
     update_timer_text();
@@ -157,6 +160,7 @@ static void start_break_countdown(void) {
     }
 
     set_controls_for_focus(false);
+    focus_camera_capture_set_paused(true);
     focus_image_stream_set_paused(true);
     app_state_set_status("Break started");
     update_timer_text();
@@ -381,6 +385,7 @@ static void pause_toggle_event(lv_event_t * e) {
     if (s_phase != PHASE_FOCUS) return;
 
     s_paused = !s_paused;
+    focus_camera_capture_set_paused(s_paused);
     focus_image_stream_set_paused(s_paused);
 
     if (s_pause_label != NULL) {
@@ -418,6 +423,8 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     } else if (s_task_id > 0) {
         focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
     }
+
+    (void)focus_camera_capture_start();
 
     if (total_seconds == 0) {
         total_seconds = (uint32_t)HOME_TASK_FALLBACK_MINUTES * 60U;
