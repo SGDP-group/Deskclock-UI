@@ -25,6 +25,7 @@ AppState g_app_state = {0};
 lv_obj_t * g_lbl_status      = NULL;
 lv_obj_t * g_lbl_temperature = NULL;
 lv_obj_t * g_spinner         = NULL;
+lv_obj_t * g_lbl_token       = NULL;
 
 /* -----------------------------------------------------------------------
  * Setters
@@ -78,4 +79,33 @@ void app_state_set_home_tasks(const HomeTask * tasks, uint8_t count) {
 
     memset(g_app_state.home_tasks, 0, sizeof(g_app_state.home_tasks));
     memcpy(g_app_state.home_tasks, tasks, sizeof(HomeTask) * bounded_count);
+}
+
+void app_state_set_auth_token(const char * token) {
+    if (token == NULL) {
+        g_app_state.auth_token[0] = '\0';
+    } else {
+        strncpy(g_app_state.auth_token, token, sizeof(g_app_state.auth_token) - 1);
+        g_app_state.auth_token[sizeof(g_app_state.auth_token) - 1] = '\0';
+    }
+
+    if (g_lbl_token != NULL) {
+        if (g_app_state.auth_token[0] != '\0') {
+            lv_label_set_text_fmt(g_lbl_token, "Token: %s", g_app_state.auth_token);
+            lv_obj_clear_flag(g_lbl_token, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(g_lbl_token, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+void app_state_set_pairing(int user_id, const char * token) {
+    g_app_state.user_id = user_id;
+
+    if (token == NULL) {
+        g_app_state.pairing_token[0] = '\0';
+    } else {
+        strncpy(g_app_state.pairing_token, token, sizeof(g_app_state.pairing_token) - 1);
+        g_app_state.pairing_token[sizeof(g_app_state.pairing_token) - 1] = '\0';
+    }
 }

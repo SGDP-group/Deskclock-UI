@@ -185,6 +185,101 @@ static bool json_get_int(const char * obj, const char * key, int * out) {
     return true;
 }
 
+static bool http_send_request(const char * request, char * response, size_t response_len) {
+    if (request == NULL || response == NULL || response_len == 0) {
+        return false;
+    }
+
+    response[0] = '\0';
+    size_t used = 0;
+
+#ifdef _WIN32
+    if (!g_winsock_ready) {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            return false;
+        }
+        g_winsock_ready = true;
+    }
+
+    struct addrinfo hints;
+    struct addrinfo * res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port[8];
+    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
+    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
+        return false;
+    }
+
+    SOCKET sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock == INVALID_SOCKET) {
+        freeaddrinfo(res);
+        return false;
+    }
+
+    if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
+        closesocket(sock);
+        freeaddrinfo(res);
+        return false;
+    }
+    freeaddrinfo(res);
+
+    send(sock, request, (int)strlen(request), 0);
+
+    while (used + 1 < response_len) {
+        int n = recv(sock, response + used, (int)(response_len - used - 1), 0);
+        if (n <= 0) {
+            break;
+        }
+        used += (size_t)n;
+    }
+    response[used] = '\0';
+    closesocket(sock);
+#else
+    struct addrinfo hints;
+    struct addrinfo * res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port[8];
+    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
+    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
+        return false;
+    }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        freeaddrinfo(res);
+        return false;
+    }
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+        close(sock);
+        freeaddrinfo(res);
+        return false;
+    }
+    freeaddrinfo(res);
+
+    send(sock, request, strlen(request), 0);
+
+    while (used + 1 < response_len) {
+        ssize_t n = recv(sock, response + used, response_len - used - 1, 0);
+        if (n <= 0) {
+            break;
+        }
+        used += (size_t)n;
+    }
+    response[used] = '\0';
+    close(sock);
+#endif
+
+    return used > 0;
+}
+
 static void format_time_range(const char * start, const char * end, char * out, size_t out_len) {
     if (out == NULL || out_len == 0) {
         return;
@@ -289,92 +384,46 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
              path, HOME_API_HOST);
 
     char response[HOME_HTTP_BUF_SIZE];
-    size_t used = 0;
-    response[0] = '\0';
-
-#ifdef _WIN32
-    if (!g_winsock_ready) {
-        WSADATA wsa;
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
-            return false;
-        }
-        g_winsock_ready = true;
-    }
-
-    struct addrinfo hints;
-    struct addrinfo * res = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port[8];
-    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
-    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
+    if (!http_send_request(request, response, sizeof(response))) {
         return false;
     }
 
-    SOCKET sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock == INVALID_SOCKET) {
-        freeaddrinfo(res);
+    const char * body = strstr(response, "\r\n\r\n");
+    if (body == NULL) {
         return false;
     }
 
-    if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
-        closesocket(sock);
-        freeaddrinfo(res);
-        return false;
-    }
-    freeaddrinfo(res);
+    body += 4;
+    strncpy(body_out, body, body_out_len - 1);
+    body_out[body_out_len - 1] = '\0';
+    return true;
+}
 
-    send(sock, request, (int)strlen(request), 0);
-
-    while (used + 1 < sizeof(response)) {
-        int n = recv(sock, response + used, (int)(sizeof(response) - used - 1), 0);
-        if (n <= 0) {
-            break;
-        }
-        used += (size_t)n;
-    }
-    response[used] = '\0';
-    closesocket(sock);
-#else
-    struct addrinfo hints;
-    struct addrinfo * res = NULL;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-
-    char port[8];
-    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
-    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
+static bool http_post_auth_token(char * body_out, size_t body_out_len) {
+    if (body_out == NULL || body_out_len == 0) {
         return false;
     }
 
-    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
-    if (sock < 0) {
-        freeaddrinfo(res);
+    char payload[192];
+    snprintf(payload, sizeof(payload),
+             "{\"ip\":\"%s\",\"callbackUrl\":\"%s\"}",
+             HOME_DEVICE_IP,
+             HOME_API_CALLBACK_URL);
+
+    char request[384];
+    snprintf(request, sizeof(request),
+             "POST /authToken/generate HTTP/1.1\r\n"
+             "Host: %s:%d\r\n"
+             "Content-Type: application/json\r\n"
+             "Content-Length: %zu\r\n"
+             "Connection: close\r\n\r\n"
+             "%s",
+             HOME_API_HOST, HOME_API_PORT, strlen(payload), payload);
+
+    char response[HOME_HTTP_BUF_SIZE];
+    if (!http_send_request(request, response, sizeof(response))) {
         return false;
     }
-
-    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
-        close(sock);
-        freeaddrinfo(res);
-        return false;
-    }
-    freeaddrinfo(res);
-
-    send(sock, request, strlen(request), 0);
-
-    while (used + 1 < sizeof(response)) {
-        ssize_t n = recv(sock, response + used, sizeof(response) - used - 1, 0);
-        if (n <= 0) {
-            break;
-        }
-        used += (size_t)n;
-    }
-    response[used] = '\0';
-    close(sock);
-#endif
 
     const char * body = strstr(response, "\r\n\r\n");
     if (body == NULL) {
@@ -402,4 +451,19 @@ bool home_api_fetch_due_today(HomeApiTask * tasks, uint8_t * out_count, uint8_t 
 
     *out_count = parse_due_today_json(body, tasks, cap);
     return true;
+}
+
+bool home_api_fetch_auth_token(char * token_out, size_t token_out_len) {
+    if (token_out == NULL || token_out_len == 0) {
+        return false;
+    }
+
+    token_out[0] = '\0';
+
+    char body[HOME_HTTP_BUF_SIZE];
+    if (!http_post_auth_token(body, sizeof(body))) {
+        return false;
+    }
+
+    return json_get_string(body, "token", token_out, token_out_len);
 }

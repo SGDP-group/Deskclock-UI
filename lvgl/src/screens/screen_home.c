@@ -117,6 +117,21 @@ static bool g_fetch_inflight = false;
 static char g_last_time[16]  = {0};
 static char g_last_date[24]  = {0};
 
+static char g_last_time[16] = {0};
+static char g_last_date[24] = {0};
+
+static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
+/* -----------------------------------------------------------------------
+ * Component — like export default function HomeScreen()
 /* -----------------------------------------------------------------------
  * Utility helpers
  * ----------------------------------------------------------------------- */
@@ -184,6 +199,11 @@ static void render_empty_state(const char * text) {
 }
 
 static void render_task_cards(void) {
+    if (HOME_API_USER_ID <= 0) {
+        render_loading_card("Auth token mode", "Tasks disabled");
+        return;
+    }
+
     if (g_app_state.tasks_loading) {
         render_empty_state("Loading tasks...");
         return;
@@ -232,6 +252,31 @@ static void render_task_cards(void) {
  * API fetch
  * ----------------------------------------------------------------------- */
 static void fetch_due_today_now(void) {
+    if (HOME_API_USER_ID <= 0) {
+        char token[128] = {0};
+        bool got_token = home_api_fetch_auth_token(token, sizeof(token));
+
+        app_state_set_tasks_loading(false);
+        app_state_set_home_tasks(NULL, 0);
+
+        if (got_token) {
+            app_state_set_auth_token(token);
+            app_state_set_status("Auth token generated");
+        } else {
+            app_state_set_auth_token(NULL);
+            app_state_set_status("Token request failed");
+        }
+
+        render_task_cards();
+        if (g_lbl_footer != NULL) {
+            lv_label_set_text(g_lbl_footer, g_app_state.status_message);
+        }
+        return;
+    }
+
+    /* Clear any prior token when user id is configured. */
+    app_state_set_auth_token(NULL);
+
     HomeApiTask api_tasks[APP_MAX_HOME_TASKS];
     HomeTask    ui_tasks[APP_MAX_HOME_TASKS];
     memset(api_tasks, 0, sizeof(api_tasks));
@@ -253,6 +298,7 @@ static void fetch_due_today_now(void) {
     app_state_set_tasks_loading(false);
     if (ok) {
         app_state_set_home_tasks(ui_tasks, count);
+        app_state_set_status("Due-today refreshed");
     } else {
         app_state_set_home_tasks(NULL, 0);
         app_state_set_status("Could not reach API");

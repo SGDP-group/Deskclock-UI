@@ -20,5 +20,6 @@ typedef struct {
 } HomeApiTask;
 
 bool home_api_fetch_due_today(HomeApiTask * tasks, uint8_t * out_count, uint8_t cap);
+bool home_api_fetch_auth_token(char * token_out, size_t token_out_len);
 
 #endif /* HOME_API_CLIENT_H */
