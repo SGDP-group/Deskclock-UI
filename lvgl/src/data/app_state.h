@@ -38,6 +38,8 @@ typedef struct {
     uint8_t  home_task_count;
     HomeTask home_tasks[APP_MAX_HOME_TASKS];
     char     auth_token[128];
+    int      user_id;
+    char     pairing_token[128];
 } AppState;
 
 /* Global instance — like createContext() + a default value */
@@ -63,5 +65,6 @@ void app_state_set_loading(bool loading);
 void app_state_set_tasks_loading(bool loading);
 void app_state_set_home_tasks(const HomeTask * tasks, uint8_t count);
 void app_state_set_auth_token(const char * token);
+void app_state_set_pairing(int user_id, const char * token);
 
 #endif /* APP_STATE_H */

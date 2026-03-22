@@ -23,6 +23,7 @@ add_compile_definitions(
     LV_SDL_VER_RES=480
 
     LV_USE_LOG=1
+    LV_USE_QRCODE=1
 
     LV_USE_ASSERT_NULL=1
     LV_USE_ASSERT_MALLOC=1
@@ -38,8 +39,13 @@ add_subdirectory(lvgl)
 set(APP_SOURCES
     src/home_api_client.c
     src/net_stream.c
+    src/pairing.c
+    src/callback_server.c
+    src/config_io.c
+    src/pairing_callback.c
     src/fonts/Antonio_bold_56.c
     lvgl/src/screens/screen_token.c
+    lvgl/src/screens/screen_home.c
 )
 
 add_executable(lvgl_app
@@ -49,7 +55,8 @@ add_executable(lvgl_app
 
 # In v9, link against lvgl::lvgl (namespaced target), not just plain lvgl
 find_package(Threads REQUIRED)
-target_link_libraries(lvgl_app lvgl::lvgl Threads::Threads)
+find_package(CURL REQUIRED)
+target_link_libraries(lvgl_app lvgl::lvgl Threads::Threads CURL::libcurl)
 
 # On Windows with MinGW, also link SDL2 and its entry-point shim
 if(WIN32)

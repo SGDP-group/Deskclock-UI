@@ -404,8 +404,11 @@ static bool http_post_auth_token(char * body_out, size_t body_out_len) {
         return false;
     }
 
-    char payload[128];
-    snprintf(payload, sizeof(payload), "{\"ip\":\"%s\"}", HOME_DEVICE_IP);
+    char payload[192];
+    snprintf(payload, sizeof(payload),
+             "{\"ip\":\"%s\",\"callbackUrl\":\"%s\"}",
+             HOME_DEVICE_IP,
+             HOME_API_CALLBACK_URL);
 
     char request[384];
     snprintf(request, sizeof(request),

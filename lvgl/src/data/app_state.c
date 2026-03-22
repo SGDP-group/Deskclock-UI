@@ -98,3 +98,14 @@ void app_state_set_auth_token(const char * token) {
         }
     }
 }
+
+void app_state_set_pairing(int user_id, const char * token) {
+    g_app_state.user_id = user_id;
+
+    if (token == NULL) {
+        g_app_state.pairing_token[0] = '\0';
+    } else {
+        strncpy(g_app_state.pairing_token, token, sizeof(g_app_state.pairing_token) - 1);
+        g_app_state.pairing_token[sizeof(g_app_state.pairing_token) - 1] = '\0';
+    }
+}
