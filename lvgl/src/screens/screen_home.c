@@ -1,6 +1,7 @@
 #include "screen_home.h"
 #include "lvgl/lvgl.h"
 #include "../data/app_state.h"
+#include "../components/session_confirm_popup.h"
 #include "src/home_api_client.h"
 #include "src/home_config.h"
 
@@ -108,8 +109,6 @@ static lv_obj_t * g_lbl_time     = NULL;
 static lv_obj_t * g_lbl_date     = NULL;
 static lv_obj_t * g_lbl_footer   = NULL;
 static lv_obj_t * g_task_list    = NULL;
-static lv_obj_t * g_touch_popup  = NULL;
-static lv_timer_t * g_touch_popup_timer = NULL;
 static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static lv_obj_t * g_lbl_empty_state = NULL;
 
@@ -278,61 +277,23 @@ static void refresh_timer_cb(lv_timer_t * timer) {
     start_due_today_fetch();
 }
 
-/* -----------------------------------------------------------------------
- * Touch test popup
- * ----------------------------------------------------------------------- */
-static void touch_popup_timer_cb(lv_timer_t * timer) {
-    (void)timer;
-    if (g_touch_popup != NULL) {
-        lv_obj_del(g_touch_popup);
-        g_touch_popup = NULL;
-    }
-    g_touch_popup_timer = NULL;
-}
-
-static void show_touch_test_popup(void) {
-    lv_obj_t * screen = lv_scr_act();
-    if (screen == NULL) return;
-
-    if (g_touch_popup_timer != NULL) {
-        lv_timer_del(g_touch_popup_timer);
-        g_touch_popup_timer = NULL;
-    }
-    if (g_touch_popup != NULL) {
-        lv_obj_del(g_touch_popup);
-        g_touch_popup = NULL;
-    }
-
-    g_touch_popup = lv_obj_create(screen);
-    lv_obj_set_size(g_touch_popup, 560, 160);
-    lv_obj_center(g_touch_popup);
-    lv_obj_set_style_bg_color(g_touch_popup, lv_color_hex(0x1A232A), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(g_touch_popup, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(g_touch_popup, 2, LV_PART_MAIN);
-    lv_obj_set_style_border_color(g_touch_popup, lv_color_hex(CLR_ACCENT), LV_PART_MAIN);
-    lv_obj_set_style_radius(g_touch_popup, 28, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(g_touch_popup, 20, LV_PART_MAIN);
-    lv_obj_clear_flag(g_touch_popup, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t * popup_lbl = lv_label_create(g_touch_popup);
-    lv_label_set_text(popup_lbl, "Touch input detected");
-    lv_obj_set_style_text_font(popup_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
-    lv_obj_set_style_text_color(popup_lbl, lv_color_hex(0xE6FFF2), LV_PART_MAIN);
-    lv_obj_center(popup_lbl);
-
-    g_touch_popup_timer = lv_timer_create(touch_popup_timer_cb, 1200, NULL);
-    if (g_touch_popup_timer != NULL) {
-        lv_timer_set_repeat_count(g_touch_popup_timer, 1);
-    }
-}
-
 static void quick_focus_event(lv_event_t * e) {
     (void)e;
     app_state_set_status("Quick Focus ready");
-    show_touch_test_popup();
+    session_confirm_popup_show_quick();
     if (g_lbl_footer != NULL) {
         lv_label_set_text(g_lbl_footer, g_app_state.status_message);
     }
+}
+
+static void task_start_event(lv_event_t * e) {
+    uint32_t idx = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+    if (idx >= g_app_state.home_task_count) return;
+
+    const HomeTask * task = &g_app_state.home_tasks[idx];
+    const char * subtask = (task->subtitle[0] != '\0') ? task->subtitle : task->title;
+
+    session_confirm_popup_show_task(subtask);
 }
 
 /* -----------------------------------------------------------------------
@@ -382,6 +343,8 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     lv_obj_set_style_border_width(start_slab, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(start_slab, CARD_START_BTN_R, LV_PART_MAIN);
     lv_obj_clear_flag(start_slab, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(start_slab, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(start_slab, task_start_event, LV_EVENT_CLICKED, (void *)(uintptr_t)idx);
 
     lv_obj_t * start_lbl = lv_label_create(start_slab);
     lv_label_set_text(start_lbl, "START");
