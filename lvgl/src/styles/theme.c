@@ -30,16 +30,15 @@ void theme_init(void) {
      * Card style — like CSS .card
      * ------------------------------------------------------------------ */
     lv_style_init(&style_card);
-    lv_style_set_radius(&style_card, 10);
-    lv_style_set_bg_color(&style_card, lv_color_hex(0x16213E));
+    lv_style_set_radius(&style_card, 90);
+    lv_style_set_bg_color(&style_card, lv_color_hex(0x1A1A1A));
     lv_style_set_bg_opa(&style_card, LV_OPA_COVER);
-    lv_style_set_border_width(&style_card, 1);
-    lv_style_set_border_color(&style_card, lv_color_hex(0x0F3460));
-    lv_style_set_pad_all(&style_card, 14);
-    lv_style_set_shadow_width(&style_card, 12);
-    lv_style_set_shadow_ofs_y(&style_card, 5);
+    lv_style_set_border_width(&style_card, 0);
+    lv_style_set_pad_all(&style_card, 0);
+    lv_style_set_shadow_width(&style_card, 60);
+    lv_style_set_shadow_ofs_y(&style_card, 30);
     lv_style_set_shadow_color(&style_card, lv_color_hex(0x000000));
-    lv_style_set_shadow_opa(&style_card, LV_OPA_30);
+    lv_style_set_shadow_opa(&style_card, LV_OPA_40);
 
     /* ------------------------------------------------------------------
      * Primary button — default state

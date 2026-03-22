@@ -8,70 +8,137 @@
 #include <string.h>
 #include <time.h>
 
-extern const lv_font_t Antonio_bold_56;
+/* -----------------------------------------------------------------------
+ * Fonts
+ * ----------------------------------------------------------------------- */
+extern const lv_font_t Antonio_bold_80;
 
+/* -----------------------------------------------------------------------
+ * Design tokens — mirroring the React CSS variables
+ *   --bg:               #090909
+ *   --surface:          #1a1a1a
+ *   --accent:           #09a672
+ *   --accent-hover:     #13b982
+ *   --text-primary:     #ffffff
+ *   --text-secondary:   #b2b2b2
+ *   --text-muted:       #555555
+ *   --border:           rgba(255,255,255,0.08)
+ * ----------------------------------------------------------------------- */
+#define CLR_BG_TOP          0x181818
+#define CLR_BG_BOTTOM       0x060606
+#define CLR_SURFACE         0x1A1A1A
+#define CLR_SURFACE_BTN_TOP 0x1D1D1D
+#define CLR_SURFACE_BTN_BOT 0x151515
+#define CLR_ACCENT          0x09A672
+#define CLR_ACCENT_STRIP    0x10B981
+#define CLR_TEXT_PRIMARY     0xFFFFFF
+#define CLR_TEXT_CLOCK       0xF5F6F8
+#define CLR_TEXT_DATE        0xF1F1F1
+#define CLR_TEXT_SECONDARY   0xD7DBE0
+#define CLR_TEXT_DESC        0xD2D2D2
+#define CLR_TEXT_MUTED       0x848C99
+#define CLR_BORDER_SUBTLE    0x3B4048
+#define CLR_TIME_BADGE_BG    0xFFFFFF
+#define CLR_TIME_BADGE_TEXT  0x111111
+#define CLR_DOT_INACTIVE     0x6B6B6B
+#define CLR_DOT_ACTIVE       0xFFFFFF
 
+/* -----------------------------------------------------------------------
+ * Layout constants — 1920×1080, scaled ~3× from 640×480 React layout
+ * ----------------------------------------------------------------------- */
+#define SCREEN_W           1920
+#define SCREEN_H           1080
+
+/* Header region */
+#define HEADER_H           340
+#define HEADER_PAD_TOP     54
+#define HEADER_PAD_LEFT    84
+#define HEADER_PAD_RIGHT   60
+
+/* Clock */
+#define CLOCK_LETTER_SPACE 40
+#define DATE_FONT_SIZE     48   /* mapped to lv_font_montserrat_48 */
+
+/* Quick Focus button */
+#define QF_BTN_W           708
+#define QF_BTN_H           318
+#define QF_BTN_RADIUS      54
+
+/* Task carousel area */
+#define TASK_AREA_PAD_X    120
+#define TASK_CARD_H        530
+#define TASK_CARD_GAP      44
+#define TASK_CARD_RADIUS   90
+
+/* Card internals */
+#define CARD_ACCENT_W      48
+#define CARD_BODY_PAD_L    54
+#define CARD_BODY_PAD_T    60
+#define CARD_START_BTN_W   372
+#define CARD_START_BTN_R   84
+
+/* Time badge inside card */
+#define TIME_BADGE_H       80
+#define TIME_BADGE_RADIUS  12
+#define TIME_BADGE_PAD_X   36
+
+/* Carousel indicator dots */
+#define DOT_SIZE           21
+#define DOT_ACTIVE_H       114
+#define DOT_RIGHT_MARGIN   36
+#define DOT_GAP            33
+
+/* Footer */
+#define FOOTER_H           40
+
+/* -----------------------------------------------------------------------
+ * Task card pool
+ * ----------------------------------------------------------------------- */
 typedef struct {
     lv_obj_t * card;
     lv_obj_t * title;
+    lv_obj_t * time_badge;
     lv_obj_t * subtitle;
-    lv_obj_t * time_range;
     lv_obj_t * status;
 } TaskCardRefs;
 
 #define HOME_CARD_POOL_SIZE 6
 
-static lv_obj_t * g_lbl_time = NULL;
-static lv_obj_t * g_lbl_date = NULL;
-static lv_obj_t * g_lbl_footer = NULL;
-static lv_obj_t * g_task_list = NULL;
-static lv_obj_t * g_touch_popup = NULL;
+static lv_obj_t * g_lbl_time     = NULL;
+static lv_obj_t * g_lbl_date     = NULL;
+static lv_obj_t * g_lbl_footer   = NULL;
+static lv_obj_t * g_task_list    = NULL;
+static lv_obj_t * g_touch_popup  = NULL;
 static lv_timer_t * g_touch_popup_timer = NULL;
 static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
-static int32_t g_card_height = 214;
+static lv_obj_t * g_lbl_empty_state = NULL;
 
 static bool g_fetch_inflight = false;
+static char g_last_time[16]  = {0};
+static char g_last_date[24]  = {0};
 
-static char g_last_time[16] = {0};
-static char g_last_date[24] = {0};
-
-static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
-    if (v < lo) {
-        return lo;
-    }
-    if (v > hi) {
-        return hi;
-    }
-    return v;
-}
-
+/* -----------------------------------------------------------------------
+ * Utility helpers
+ * ----------------------------------------------------------------------- */
 static void copy_text_safe(char * dst, size_t dst_len, const char * src) {
-    if (dst == NULL || dst_len == 0) {
-        return;
-    }
-
-    if (src == NULL) {
-        dst[0] = '\0';
-        return;
-    }
-
+    if (dst == NULL || dst_len == 0) return;
+    if (src == NULL) { dst[0] = '\0'; return; }
     strncpy(dst, src, dst_len - 1);
     dst[dst_len - 1] = '\0';
 }
 
 static void uppercase_ascii(char * text) {
-    if (text == NULL) {
-        return;
-    }
+    if (text == NULL) return;
     for (size_t i = 0; text[i] != '\0'; i++) {
         text[i] = (char)toupper((unsigned char)text[i]);
     }
 }
 
+/* -----------------------------------------------------------------------
+ * Clock logic
+ * ----------------------------------------------------------------------- */
 static void update_clock_labels(void) {
-    if (g_lbl_time == NULL || g_lbl_date == NULL) {
-        return;
-    }
+    if (g_lbl_time == NULL || g_lbl_date == NULL) return;
 
     time_t now = time(NULL);
     struct tm local_tm;
@@ -84,7 +151,7 @@ static void update_clock_labels(void) {
     char time_buf[16] = {0};
     char date_buf[24] = {0};
 
-    strftime(time_buf, sizeof(time_buf), "%H :%M", &local_tm);
+    strftime(time_buf, sizeof(time_buf), "%H : %M", &local_tm);
     strftime(date_buf, sizeof(date_buf), "%a, %d %b", &local_tm);
     uppercase_ascii(date_buf);
 
@@ -92,91 +159,10 @@ static void update_clock_labels(void) {
         lv_label_set_text(g_lbl_time, time_buf);
         copy_text_safe(g_last_time, sizeof(g_last_time), time_buf);
     }
-
     if (strcmp(g_last_date, date_buf) != 0) {
         lv_label_set_text(g_lbl_date, date_buf);
         copy_text_safe(g_last_date, sizeof(g_last_date), date_buf);
     }
-}
-
-static void apply_carousel_depth(void) {
-    if (g_task_list == NULL) {
-        return;
-    }
-
-    /* Keep cards at stable styles while debugging AV during scroll. */
-    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
-        lv_obj_t * card = g_cards[i].card;
-        if (card == NULL || lv_obj_has_flag(card, LV_OBJ_FLAG_HIDDEN)) {
-            continue;
-        }
-
-        lv_obj_set_style_opa(card, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_translate_x(card, 0, LV_PART_MAIN);
-    }
-}
-
-static void render_loading_card(const char * title, const char * subtitle) {
-    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
-        if (g_cards[i].card == NULL) {
-            continue;
-        }
-
-        if (i == 0) {
-            lv_label_set_text(g_cards[i].title, title);
-            lv_label_set_text(g_cards[i].subtitle, subtitle);
-            lv_label_set_text(g_cards[i].time_range, "");
-            lv_label_set_text(g_cards[i].status, "");
-            lv_obj_clear_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(g_cards[i].card, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-
-    apply_carousel_depth();
-}
-
-static void render_task_cards(void) {
-    if (g_app_state.tasks_loading) {
-        render_loading_card("Loading tasks", "Checking due-today");
-        return;
-    }
-
-    if (g_app_state.home_task_count == 0) {
-        render_loading_card("No tasks for now", "Enjoy the clear schedule");
-        return;
-    }
-
-    uint8_t visible_count = g_app_state.home_task_count;
-    if (visible_count > HOME_CARD_POOL_SIZE) {
-        visible_count = HOME_CARD_POOL_SIZE;
-    }
-
-    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
-        lv_obj_t * card = g_cards[i].card;
-        if (card == NULL) {
-            continue;
-        }
-
-        if (i >= visible_count) {
-            lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
-            continue;
-        }
-
-        const HomeTask * task = &g_app_state.home_tasks[i];
-        lv_label_set_text(g_cards[i].title, task->title);
-        lv_label_set_text(g_cards[i].subtitle, task->subtitle);
-        lv_label_set_text(g_cards[i].time_range, task->time_range);
-        lv_label_set_text(g_cards[i].status, task->status);
-
-        lv_obj_set_style_text_color(g_cards[i].status,
-                                    task->completed ? lv_color_hex(0x8EF2A5) : lv_color_hex(0xD8DEE9),
-                                    LV_PART_MAIN);
-
-        lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    apply_carousel_depth();
 }
 
 static void clock_timer_cb(lv_timer_t * timer) {
@@ -184,22 +170,83 @@ static void clock_timer_cb(lv_timer_t * timer) {
     update_clock_labels();
 }
 
+/* -----------------------------------------------------------------------
+ * Task card rendering
+ * ----------------------------------------------------------------------- */
+static void render_empty_state(const char * text) {
+    if (g_task_list != NULL) {
+        lv_obj_add_flag(g_task_list, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_lbl_empty_state != NULL) {
+        lv_label_set_text(g_lbl_empty_state, text);
+        lv_obj_clear_flag(g_lbl_empty_state, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void render_task_cards(void) {
+    if (g_app_state.tasks_loading) {
+        render_empty_state("Loading tasks...");
+        return;
+    }
+    if (g_app_state.home_task_count == 0) {
+        render_empty_state("No tasks today, Enjoy your day :D");
+        return;
+    }
+    
+    /* Ensure list is visible and empty state text is hidden */
+    if (g_task_list != NULL) {
+        lv_obj_clear_flag(g_task_list, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (g_lbl_empty_state != NULL) {
+        lv_obj_add_flag(g_lbl_empty_state, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    uint8_t visible = g_app_state.home_task_count;
+    if (visible > HOME_CARD_POOL_SIZE) visible = HOME_CARD_POOL_SIZE;
+
+    for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
+        lv_obj_t * card = g_cards[i].card;
+        if (card == NULL) continue;
+
+        if (i >= visible) {
+            lv_obj_add_flag(card, LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
+        const HomeTask * task = &g_app_state.home_tasks[i];
+        lv_label_set_text(g_cards[i].title,      task->title);
+        lv_label_set_text(g_cards[i].subtitle,    task->subtitle);
+        lv_label_set_text(g_cards[i].time_badge,  task->time_range);
+        lv_label_set_text(g_cards[i].status,      task->status);
+
+        lv_obj_set_style_text_color(
+            g_cards[i].status,
+            task->completed ? lv_color_hex(0x8EF2A5) : lv_color_hex(0xD8DEE9),
+            LV_PART_MAIN);
+
+        lv_obj_clear_flag(card, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+/* -----------------------------------------------------------------------
+ * API fetch
+ * ----------------------------------------------------------------------- */
 static void fetch_due_today_now(void) {
     HomeApiTask api_tasks[APP_MAX_HOME_TASKS];
-    HomeTask ui_tasks[APP_MAX_HOME_TASKS];
+    HomeTask    ui_tasks[APP_MAX_HOME_TASKS];
     memset(api_tasks, 0, sizeof(api_tasks));
-    memset(ui_tasks, 0, sizeof(ui_tasks));
+    memset(ui_tasks,  0, sizeof(ui_tasks));
 
     uint8_t count = 0;
     bool ok = home_api_fetch_due_today(api_tasks, &count, HOME_CARD_POOL_SIZE);
     if (ok) {
         for (uint8_t i = 0; i < count; i++) {
-            ui_tasks[i].id = api_tasks[i].id;
+            ui_tasks[i].id        = api_tasks[i].id;
             ui_tasks[i].completed = api_tasks[i].completed;
-            copy_text_safe(ui_tasks[i].title, sizeof(ui_tasks[i].title), api_tasks[i].title);
-            copy_text_safe(ui_tasks[i].subtitle, sizeof(ui_tasks[i].subtitle), api_tasks[i].subtitle);
+            copy_text_safe(ui_tasks[i].title,      sizeof(ui_tasks[i].title),      api_tasks[i].title);
+            copy_text_safe(ui_tasks[i].subtitle,   sizeof(ui_tasks[i].subtitle),   api_tasks[i].subtitle);
             copy_text_safe(ui_tasks[i].time_range, sizeof(ui_tasks[i].time_range), api_tasks[i].time_range);
-            copy_text_safe(ui_tasks[i].status, sizeof(ui_tasks[i].status), api_tasks[i].status);
+            copy_text_safe(ui_tasks[i].status,     sizeof(ui_tasks[i].status),     api_tasks[i].status);
         }
     }
 
@@ -218,14 +265,10 @@ static void fetch_due_today_now(void) {
 }
 
 static void start_due_today_fetch(void) {
-    if (g_fetch_inflight) {
-        return;
-    }
-
+    if (g_fetch_inflight) return;
     g_fetch_inflight = true;
     app_state_set_tasks_loading(true);
     render_task_cards();
-
     fetch_due_today_now();
     g_fetch_inflight = false;
 }
@@ -235,6 +278,9 @@ static void refresh_timer_cb(lv_timer_t * timer) {
     start_due_today_fetch();
 }
 
+/* -----------------------------------------------------------------------
+ * Touch test popup
+ * ----------------------------------------------------------------------- */
 static void touch_popup_timer_cb(lv_timer_t * timer) {
     (void)timer;
     if (g_touch_popup != NULL) {
@@ -246,34 +292,31 @@ static void touch_popup_timer_cb(lv_timer_t * timer) {
 
 static void show_touch_test_popup(void) {
     lv_obj_t * screen = lv_scr_act();
-    if (screen == NULL) {
-        return;
-    }
+    if (screen == NULL) return;
 
     if (g_touch_popup_timer != NULL) {
         lv_timer_del(g_touch_popup_timer);
         g_touch_popup_timer = NULL;
     }
-
     if (g_touch_popup != NULL) {
         lv_obj_del(g_touch_popup);
         g_touch_popup = NULL;
     }
 
     g_touch_popup = lv_obj_create(screen);
-    lv_obj_set_size(g_touch_popup, 280, 90);
+    lv_obj_set_size(g_touch_popup, 560, 160);
     lv_obj_center(g_touch_popup);
     lv_obj_set_style_bg_color(g_touch_popup, lv_color_hex(0x1A232A), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(g_touch_popup, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(g_touch_popup, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(g_touch_popup, lv_color_hex(0x43C28F), LV_PART_MAIN);
-    lv_obj_set_style_radius(g_touch_popup, 14, LV_PART_MAIN);
-    lv_obj_set_style_pad_all(g_touch_popup, 10, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_touch_popup, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_touch_popup, lv_color_hex(CLR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_radius(g_touch_popup, 28, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_touch_popup, 20, LV_PART_MAIN);
     lv_obj_clear_flag(g_touch_popup, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t * popup_lbl = lv_label_create(g_touch_popup);
     lv_label_set_text(popup_lbl, "Touch input detected");
-    lv_obj_set_style_text_font(popup_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_font(popup_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(popup_lbl, lv_color_hex(0xE6FFF2), LV_PART_MAIN);
     lv_obj_center(popup_lbl);
 
@@ -292,224 +335,250 @@ static void quick_focus_event(lv_event_t * e) {
     }
 }
 
-static void list_scroll_event(lv_event_t * e) {
-    (void)e;
+/* -----------------------------------------------------------------------
+ * Task card builder — creates one card matching the React TaskCard layout
+ *
+ * Layout per card:
+ *   ┌─────────────────────────────────────────────────────┐
+ *   │ [accent] │   Title                  │  START  │
+ *   │  strip   │   ┌─ time badge ──────┐  │  btn    │
+ *   │  (green) │   │ ⏱ 09:00 – 10:30  │  │ (green) │
+ *   │          │   └───────────────────┘  │         │
+ *   │          │   Description text       │         │
+ *   └─────────────────────────────────────────────────────┘
+ * ----------------------------------------------------------------------- */
+static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
+    /* Card container */
+    lv_obj_t * card = lv_obj_create(parent);
+    lv_obj_set_width(card, lv_pct(100));
+    lv_obj_set_height(card, TASK_CARD_H);
+    lv_obj_set_style_bg_color(card, lv_color_hex(CLR_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(card, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(card, TASK_CARD_RADIUS, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(card, 60, LV_PART_MAIN);
+    lv_obj_set_style_shadow_ofs_y(card, 30, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(card, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* Green accent strip (left edge) */
+    lv_obj_t * accent = lv_obj_create(card);
+    lv_obj_set_size(accent, CARD_ACCENT_W, lv_pct(100));
+    lv_obj_align(accent, LV_ALIGN_LEFT_MID, 0, 0);
+    lv_obj_set_style_bg_color(accent, lv_color_hex(CLR_ACCENT_STRIP), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(accent, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(accent, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(accent, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
+
+    /* START button (right side, full height, rounded) */
+    lv_obj_t * start_slab = lv_obj_create(card);
+    lv_obj_set_size(start_slab, CARD_START_BTN_W, lv_pct(100));
+    lv_obj_align(start_slab, LV_ALIGN_RIGHT_MID, 0, 0);
+    lv_obj_set_style_bg_color(start_slab, lv_color_hex(CLR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(start_slab, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(start_slab, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(start_slab, CARD_START_BTN_R, LV_PART_MAIN);
+    lv_obj_clear_flag(start_slab, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * start_lbl = lv_label_create(start_slab);
+    lv_label_set_text(start_lbl, "START");
+    lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(start_lbl, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(start_lbl, 4, LV_PART_MAIN);
+    lv_obj_center(start_lbl);
+
+    /* Body content area (between accent strip and START button) */
+    lv_obj_t * body = lv_obj_create(card);
+    lv_obj_remove_style_all(body);
+    int32_t body_w = SCREEN_W - (TASK_AREA_PAD_X * 2) - CARD_ACCENT_W - CARD_START_BTN_W - CARD_BODY_PAD_L;
+    lv_obj_set_size(body, body_w, lv_pct(100));
+    lv_obj_align(body, LV_ALIGN_LEFT_MID, CARD_ACCENT_W + CARD_BODY_PAD_L, 0);
+
+    /* Title — large, bold, truncated */
+    lv_obj_t * title = lv_label_create(body);
+    lv_obj_set_width(title, lv_pct(100));
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
+    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T);
+
+    /* White time badge — full width bar with time range text */
+    lv_obj_t * badge_cont = lv_obj_create(body);
+    lv_obj_set_width(badge_cont, lv_pct(95));
+    lv_obj_set_height(badge_cont, TIME_BADGE_H);
+    lv_obj_set_style_bg_color(badge_cont, lv_color_hex(CLR_TIME_BADGE_BG), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(badge_cont, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(badge_cont, TIME_BADGE_RADIUS, LV_PART_MAIN);
+    lv_obj_set_style_border_width(badge_cont, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(badge_cont, TIME_BADGE_PAD_X, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(badge_cont, TIME_BADGE_PAD_X, LV_PART_MAIN);
+    lv_obj_align(badge_cont, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T + 80);
+    lv_obj_clear_flag(badge_cont, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * time_lbl = lv_label_create(badge_cont);
+    lv_obj_set_style_text_font(time_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(time_lbl, lv_color_hex(CLR_TIME_BADGE_TEXT), LV_PART_MAIN);
+    lv_obj_align(time_lbl, LV_ALIGN_LEFT_MID, 0, 0);
+
+    /* Subtitle / description */
+    lv_obj_t * subtitle = lv_label_create(body);
+    lv_obj_set_width(subtitle, lv_pct(100));
+    lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(subtitle, lv_color_hex(CLR_TEXT_DESC), LV_PART_MAIN);
+    lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T + 180);
+
+    /* Status label (bottom of body) */
+    lv_obj_t * status = lv_label_create(body);
+    lv_obj_set_style_text_font(status, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(status, lv_color_hex(0xA8E7B4), LV_PART_MAIN);
+    lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -30);
+
+    /* Store references */
+    g_cards[idx].card       = card;
+    g_cards[idx].title      = title;
+    g_cards[idx].time_badge = time_lbl;
+    g_cards[idx].subtitle   = subtitle;
+    g_cards[idx].status     = status;
 }
 
 static void create_task_cards(lv_obj_t * parent) {
     for (uint8_t i = 0; i < HOME_CARD_POOL_SIZE; i++) {
-        lv_obj_t * card = lv_obj_create(parent);
-        lv_obj_set_width(card, lv_pct(100));
-        lv_obj_set_height(card, g_card_height);
-        lv_obj_set_style_bg_color(card, lv_color_hex(0x1A1A1A), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_border_width(card, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(card, 30, LV_PART_MAIN);
-        lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-        lv_obj_set_style_shadow_width(card, 0, LV_PART_MAIN);
-
-        lv_obj_t * left_strip = lv_obj_create(card);
-        lv_obj_set_size(left_strip, 16, lv_pct(100));
-        lv_obj_align(left_strip, LV_ALIGN_LEFT_MID, 0, 0);
-        lv_obj_set_style_bg_color(left_strip, lv_color_hex(0x10B981), LV_PART_MAIN);
-        lv_obj_set_style_border_width(left_strip, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(left_strip, LV_RADIUS_CIRCLE, LV_PART_MAIN);
-
-        lv_obj_t * start_slab = lv_obj_create(card);
-        lv_obj_set_size(start_slab, 120, lv_pct(100));
-        lv_obj_align(start_slab, LV_ALIGN_RIGHT_MID, 0, 0);
-        lv_obj_set_style_bg_color(start_slab, lv_color_hex(0x09A672), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(start_slab, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_border_width(start_slab, 0, LV_PART_MAIN);
-        lv_obj_set_style_radius(start_slab, 28, LV_PART_MAIN);
-
-        lv_obj_t * start_lbl = lv_label_create(start_slab);
-        lv_label_set_text(start_lbl, "START");
-        lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
-        lv_obj_set_style_text_color(start_lbl, lv_color_hex(0xF4FBF7), LV_PART_MAIN);
-        lv_obj_center(start_lbl);
-
-        lv_obj_t * content = lv_obj_create(card);
-        lv_obj_remove_style_all(content);
-        lv_obj_set_size(content, lv_pct(66), lv_pct(100));
-        lv_obj_align(content, LV_ALIGN_LEFT_MID, 18, 0);
-
-        lv_obj_t * title = lv_label_create(content);
-        lv_obj_set_width(title, lv_pct(100));
-        lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
-        lv_obj_set_style_text_color(title, lv_color_hex(0xF3F4F7), LV_PART_MAIN);
-        lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-        lv_obj_align(title, LV_ALIGN_TOP_LEFT, 0, 22);
-
-        lv_obj_t * subtitle = lv_label_create(content);
-        lv_obj_set_width(subtitle, lv_pct(100));
-        lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_24, LV_PART_MAIN);
-        lv_obj_set_style_text_color(subtitle, lv_color_hex(0xC3C7CF), LV_PART_MAIN);
-        lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
-        lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, 108);
-
-        lv_obj_t * time_range = lv_label_create(content);
-        lv_obj_set_style_text_font(time_range, &lv_font_montserrat_14, LV_PART_MAIN);
-        lv_obj_set_style_text_color(time_range, lv_color_hex(0xA0C9D5), LV_PART_MAIN);
-        lv_obj_align(time_range, LV_ALIGN_BOTTOM_LEFT, 0, -28);
-
-        lv_obj_t * status = lv_label_create(content);
-        lv_obj_set_style_text_font(status, &lv_font_montserrat_14, LV_PART_MAIN);
-        lv_obj_set_style_text_color(status, lv_color_hex(0xA8E7B4), LV_PART_MAIN);
-        lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -10);
-
-        g_cards[i].card = card;
-        g_cards[i].title = title;
-        g_cards[i].subtitle = subtitle;
-        g_cards[i].time_range = time_range;
-        g_cards[i].status = status;
+        create_single_task_card(parent, i);
     }
 }
 
+/* -----------------------------------------------------------------------
+ * Native LVGL Scrollbar Styling
+ * (Replaced static carousel indicator)
+ * ----------------------------------------------------------------------- */
+static void apply_list_scrollbar_style(lv_obj_t * list) {
+    lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_set_style_bg_color(list, lv_color_hex(CLR_DOT_ACTIVE), LV_PART_SCROLLBAR);
+    lv_obj_set_style_bg_opa(list, LV_OPA_50, LV_PART_SCROLLBAR);
+    lv_obj_set_style_radius(list, 10, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(list, 12, LV_PART_SCROLLBAR);
+    lv_obj_set_style_pad_right(list, 16, LV_PART_SCROLLBAR);
+}
+
+/* -----------------------------------------------------------------------
+ * screen_home_create — main entry point
+ * Reconstructs the React Dashboard layout at 1920×1080:
+ *   ┌─────────────────────────────────────────┐
+ *   │  HH : MM          [ ▶ Quick Focus ]     │  ← header
+ *   │  SUN, 22 MAR                            │
+ *   ├─────────────────────────────────────────┤
+ *   │  ┌─────────────────────────────────┐  · │  ← task carousel
+ *   │  │ [▌] Title            [ START ]  │  █ │
+ *   │  │     ┌─ 09:00 – 10:30 ──────┐   │  · │
+ *   │  │     Description             │   │    │
+ *   │  └─────────────────────────────────┘    │
+ *   ├─────────────────────────────────────────┤
+ *   │  Ready                                  │  ← footer
+ *   └─────────────────────────────────────────┘
+ * ----------------------------------------------------------------------- */
 lv_obj_t * screen_home_create(void) {
-    lv_display_t * disp = lv_display_get_default();
-    int32_t sw = lv_display_get_horizontal_resolution(disp);
-    int32_t sh = lv_display_get_vertical_resolution(disp);
+    int32_t sw = SCREEN_W;
+    int32_t sh = SCREEN_H;
 
-    int32_t margin = clampi(sw / 48, 12, 28);
-    int32_t header_h = clampi((sh * 148) / 480, 120, 156);
-    int32_t footer_h = 22;
-    int32_t task_y = margin + header_h;
-    int32_t task_h = sh - task_y - footer_h - margin;
-    task_h = clampi(task_h, 250, sh - 110);
-    g_card_height = clampi((task_h * 214) / 332, 182, 230);
+    /* Task area geometry */
+    int32_t task_y = HEADER_H;
+    int32_t task_h = sh - HEADER_H - FOOTER_H;
 
+    /* ── Screen ── */
     lv_obj_t * screen = lv_obj_create(NULL);
     lv_obj_set_size(screen, sw, sh);
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0C0C0C), LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_color(screen, lv_color_hex(0x060606), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(CLR_BG_TOP), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(screen, lv_color_hex(CLR_BG_BOTTOM), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(screen, LV_GRAD_DIR_VER, LV_PART_MAIN);
     lv_obj_set_style_pad_all(screen, 0, LV_PART_MAIN);
     lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
 
+    /* ── Clock column (top-left) ── */
     lv_obj_t * time_col = lv_obj_create(screen);
     lv_obj_remove_style_all(time_col);
-    int32_t time_w = clampi((sw * 330) / 640, 260, 340);
-    int32_t time_x = clampi((sw * 28) / 640, 12, 28);
-    int32_t time_y = clampi((sh * 18) / 480, 10, 20);
-    lv_obj_set_size(time_col, time_w, header_h);
-    lv_obj_set_pos(time_col, time_x, time_y);
+    lv_obj_set_size(time_col, 1500, HEADER_H - HEADER_PAD_TOP);
+    lv_obj_set_pos(time_col, HEADER_PAD_LEFT, HEADER_PAD_TOP);
 
     g_lbl_time = lv_label_create(time_col);
-    lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_56, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(0xF5F6F8), LV_PART_MAIN);
-    lv_obj_set_style_text_letter_space(g_lbl_time, 35, LV_PART_MAIN);
+    lv_obj_set_width(g_lbl_time, 1000); /* Prevent clipping by explicitly forcing wide bounding box */
+    lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_80, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(CLR_TEXT_CLOCK), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(g_lbl_time, CLOCK_LETTER_SPACE, LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
     g_lbl_date = lv_label_create(time_col);
-    lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(0xD3D7DD), LV_PART_MAIN);
-    lv_obj_align(g_lbl_date, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(CLR_TEXT_DATE), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(g_lbl_date, 7, LV_PART_MAIN);
+    lv_obj_align_to(g_lbl_date, g_lbl_time, LV_ALIGN_OUT_BOTTOM_LEFT, 4, 30);
 
+    /* ── Quick Focus button (top-right) ── */
     lv_obj_t * quick_btn = lv_btn_create(screen);
-    int32_t quick_w = clampi((sw * 220) / 640, 188, 220);
-    int32_t quick_h = clampi((sh * 94) / 480, 80, 96);
-    int32_t quick_gap = clampi((sw * 10) / 640, 6, 12);
-    int32_t quick_x = time_x + time_w + quick_gap;
-    int32_t quick_y = time_y + 4;
-    int32_t quick_right_limit = sw - quick_w - clampi((sw * 10) / 640, 8, 12);
-    if (quick_x > quick_right_limit) {
-        quick_x = quick_right_limit;
-    }
-    lv_obj_set_size(quick_btn, quick_w, quick_h);
-    lv_obj_set_pos(quick_btn, quick_x, quick_y);
-    lv_obj_set_style_bg_opa(quick_btn, LV_OPA_10, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(quick_btn, lv_color_hex(0x1D1D1D), LV_PART_MAIN);
-    lv_obj_set_style_bg_grad_color(quick_btn, lv_color_hex(0x151515), LV_PART_MAIN);
+    lv_obj_set_size(quick_btn, QF_BTN_W, QF_BTN_H);
+    lv_obj_set_pos(quick_btn, sw - QF_BTN_W - HEADER_PAD_RIGHT, HEADER_PAD_TOP);
+    lv_obj_set_style_bg_color(quick_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(quick_btn, lv_color_hex(CLR_SURFACE_BTN_BOT), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(quick_btn, LV_GRAD_DIR_VER, LV_PART_MAIN);
-    lv_obj_set_style_border_width(quick_btn, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(quick_btn, lv_color_hex(0x3B4048), LV_PART_MAIN);
-    lv_obj_set_style_radius(quick_btn, 18, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(quick_btn, 24, LV_PART_MAIN);
+    lv_obj_set_style_border_width(quick_btn, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(quick_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(quick_btn, QF_BTN_RADIUS, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(quick_btn, 48, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_30, LV_PART_MAIN);
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * quick_lbl = lv_label_create(quick_btn);
     lv_label_set_text(quick_lbl, LV_SYMBOL_PLAY "  Quick Focus");
-    lv_obj_set_style_text_font(quick_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(quick_lbl, lv_color_hex(0xDFE3EA), LV_PART_MAIN);
+    lv_obj_set_style_text_font(quick_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(quick_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
     lv_obj_center(quick_lbl);
 
-    lv_obj_t * layer_back = lv_obj_create(screen);
-    lv_obj_set_size(layer_back, sw - clampi((sw * 80) / 640, 42, 80), task_h - 20);
-    lv_obj_set_pos(layer_back, clampi((sw * 38) / 640, 20, 38), task_y + 14);
-    lv_obj_set_style_bg_color(layer_back, lv_color_hex(0x202935), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(layer_back, LV_OPA_30, LV_PART_MAIN);
-    lv_obj_set_style_border_width(layer_back, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
-    lv_obj_add_flag(layer_back, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_t * layer_mid = lv_obj_create(screen);
-    lv_obj_set_size(layer_mid, sw - clampi((sw * 60) / 640, 30, 60), task_h - 10);
-    lv_obj_set_pos(layer_mid, clampi((sw * 52) / 640, 26, 52), task_y + 8);
-    lv_obj_set_style_bg_color(layer_mid, lv_color_hex(0x141920), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(layer_mid, LV_OPA_50, LV_PART_MAIN);
-    lv_obj_set_style_border_width(layer_mid, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(layer_mid, 22, LV_PART_MAIN);
-    lv_obj_add_flag(layer_mid, LV_OBJ_FLAG_HIDDEN);
-
+    /* ── Task list (flex column, scrollable) ── */
     g_task_list = lv_obj_create(screen);
-    lv_obj_set_size(g_task_list, sw - (margin * 2), task_h);
-    lv_obj_set_pos(g_task_list, margin, task_y);
+    lv_obj_set_size(g_task_list, sw - (TASK_AREA_PAD_X * 2) - DOT_RIGHT_MARGIN, task_h);
+    lv_obj_set_pos(g_task_list, TASK_AREA_PAD_X, task_y);
     lv_obj_set_style_bg_opa(g_task_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(g_task_list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_left(g_task_list, clampi((sw * 40) / 640, 18, 40), LV_PART_MAIN);
-    lv_obj_set_style_pad_right(g_task_list, clampi((sw * 40) / 640, 18, 40), LV_PART_MAIN);
-    lv_obj_set_style_pad_top(g_task_list, clampi((task_h - g_card_height) / 2, 28, 62), LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(g_task_list, clampi((task_h - g_card_height) / 2, 28, 62), LV_PART_MAIN);
-    lv_obj_set_style_pad_gap(g_task_list, clampi((sh * 44) / 480, 24, 44), LV_PART_MAIN);
+    lv_obj_set_style_pad_top(g_task_list, 30, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(g_task_list, 30, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(g_task_list, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(g_task_list, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_gap(g_task_list, TASK_CARD_GAP, LV_PART_MAIN);
     lv_obj_set_scroll_dir(g_task_list, LV_DIR_VER);
     lv_obj_set_scroll_snap_y(g_task_list, LV_SCROLL_SNAP_CENTER);
-    lv_obj_set_scrollbar_mode(g_task_list, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_layout(g_task_list, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(g_task_list, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(g_task_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-    lv_obj_add_event_cb(g_task_list, list_scroll_event, LV_EVENT_SCROLL_END, NULL);
+
+    apply_list_scrollbar_style(g_task_list);
+
+    /* Empty state label */
+    g_lbl_empty_state = lv_label_create(screen);
+    lv_obj_set_style_text_font(g_lbl_empty_state, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_empty_state, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_set_style_text_align(g_lbl_empty_state, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(g_lbl_empty_state, LV_ALIGN_CENTER, 0, 100);
+    lv_obj_add_flag(g_lbl_empty_state, LV_OBJ_FLAG_HIDDEN);
 
     create_task_cards(g_task_list);
 
-    lv_obj_t * indicator = lv_obj_create(screen);
-    lv_obj_remove_style_all(indicator);
-    lv_obj_set_size(indicator, 10, 88);
-    lv_obj_set_pos(indicator, sw - clampi((sw * 12) / 640, 8, 12), task_y + (task_h / 2) - 44);
-
-    lv_obj_t * dot_top = lv_obj_create(indicator);
-    lv_obj_set_size(dot_top, 7, 7);
-    lv_obj_set_style_radius(dot_top, 3, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(dot_top, lv_color_hex(0xE7EBEF), LV_PART_MAIN);
-    lv_obj_set_style_border_width(dot_top, 0, LV_PART_MAIN);
-    lv_obj_align(dot_top, LV_ALIGN_TOP_MID, 0, 0);
-
-    lv_obj_t * bar = lv_obj_create(indicator);
-    lv_obj_set_size(bar, 7, 38);
-    lv_obj_set_style_radius(bar, 4, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(0xEDF1F5), LV_PART_MAIN);
-    lv_obj_set_style_border_width(bar, 0, LV_PART_MAIN);
-    lv_obj_align(bar, LV_ALIGN_CENTER, 0, 0);
-
-    lv_obj_t * dot_bottom = lv_obj_create(indicator);
-    lv_obj_set_size(dot_bottom, 7, 7);
-    lv_obj_set_style_radius(dot_bottom, 3, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(dot_bottom, lv_color_hex(0xD4DAE0), LV_PART_MAIN);
-    lv_obj_set_style_border_width(dot_bottom, 0, LV_PART_MAIN);
-    lv_obj_align(dot_bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
-
+    /* ── Footer status label ── */
     g_lbl_footer = lv_label_create(screen);
-    lv_obj_set_style_text_font(g_lbl_footer, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_footer, lv_color_hex(0x848C99), LV_PART_MAIN);
-    lv_obj_set_pos(g_lbl_footer, margin, sh - footer_h);
+    lv_obj_set_style_text_font(g_lbl_footer, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_footer, lv_color_hex(CLR_TEXT_MUTED), LV_PART_MAIN);
+    lv_obj_set_pos(g_lbl_footer, HEADER_PAD_LEFT, sh - FOOTER_H);
     lv_label_set_text(g_lbl_footer, "Ready");
 
+    /* ── Wire up global state ── */
     g_lbl_status = g_lbl_footer;
     app_state_set_status("Ready");
     app_state_set_tasks_loading(true);
 
+    /* ── Kick off timers and initial fetch ── */
     update_clock_labels();
     render_task_cards();
 
