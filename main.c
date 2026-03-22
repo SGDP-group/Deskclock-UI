@@ -9,6 +9,7 @@
     #include <unistd.h>
     #include <signal.h>
     #include <execinfo.h>
+    #include "lvgl/src/drivers/evdev/lv_evdev.h"
 #endif
 
 #include <stdio.h>
@@ -170,12 +171,15 @@ int main(int argc, char *argv[]) {
     lv_init();
 
 #ifdef _WIN32
-    lv_display_t * disp  = lv_sdl_window_create(640, 480);
+    lv_display_t * disp  = lv_sdl_window_create(1920, 1080);
     lv_indev_t   * mouse = lv_sdl_mouse_create();
     (void)mouse;
 #else
     lv_display_t * disp = lv_linux_fbdev_create();
     lv_linux_fbdev_set_file(disp, "/dev/fb0");
+
+    lv_indev_t * touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/event0");
+    (void)touch;
 #endif
 
     (void)disp;

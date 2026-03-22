@@ -10,17 +10,18 @@ add_compile_definitions(
     LV_BUILD_EXAMPLES=0       # Don't compile LVGL's built-in examples (saves build time)
     LV_BUILD_DEMOS=0          # Don't compile LVGL's built-in demos
 
+    # Color depth must match SDL (32-bit XRGB8888)
+    LV_COLOR_DEPTH=32
+
+    # Use the system C library malloc instead of LVGL's tiny built-in pool (default is only 64KB)
+    LV_USE_STDLIB_MALLOC=1
+    LV_USE_STDLIB_STRING=1
+    LV_USE_STDLIB_SPRINTF=1
+
     # Fonts — enable only the sizes you need (each adds ~30-100KB to your binary)
     LV_FONT_MONTSERRAT_14=1
     LV_FONT_MONTSERRAT_24=1
     LV_FONT_MONTSERRAT_48=1
-    LV_FONT_MONTSERRAT_56=1
-
-    # Enable SDL2 driver for Windows development
-    # On Pi, swap this for LV_USE_LINUX_FBDEV=1 (see Section 14)
-    LV_USE_SDL=1
-    LV_SDL_HOR_RES=640
-    LV_SDL_VER_RES=480
 
     LV_USE_LOG=1
     LV_USE_QRCODE=1
@@ -28,6 +29,19 @@ add_compile_definitions(
     LV_USE_ASSERT_NULL=1
     LV_USE_ASSERT_MALLOC=1
 )
+
+if(WIN32)
+    add_compile_definitions(
+        LV_USE_SDL=1
+        LV_SDL_HOR_RES=1920
+        LV_SDL_VER_RES=1080
+    )
+else()
+    add_compile_definitions(
+        LV_USE_LINUX_FBDEV=1
+        LV_USE_EVDEV=1
+    )
+endif()
 
 include_directories(${CMAKE_SOURCE_DIR})
 
@@ -46,6 +60,7 @@ set(APP_SOURCES
     src/fonts/Antonio_bold_56.c
     lvgl/src/screens/screen_token.c
     lvgl/src/screens/screen_home.c
+    src/fonts/Antonio_bold_80.c
 )
 
 add_executable(lvgl_app

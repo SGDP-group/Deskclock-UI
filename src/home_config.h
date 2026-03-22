@@ -2,7 +2,7 @@
 #define HOME_CONFIG_H
 
 /* Central home screen API config. */
-#define HOME_API_HOST "127.0.0.1"
+#define HOME_API_HOST "192.168.8.166"
 #define HOME_API_PORT 8080
 #define HOME_DEVICE_IP HOME_API_HOST
 #define HOME_API_CALLBACK_URL "http://127.0.0.1:9000/pairing/callback"
