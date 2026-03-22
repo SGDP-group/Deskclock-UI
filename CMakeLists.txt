@@ -52,6 +52,7 @@ add_subdirectory(lvgl)
 set(APP_SOURCES
     src/home_api_client.c
     src/net_stream.c
+    src/focus_image_stream.c
     src/fonts/Antonio_bold_56.c
     src/fonts/Antonio_bold_80.c
 )

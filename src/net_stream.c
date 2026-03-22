@@ -18,8 +18,8 @@ bool net_stream_enqueue(const void * data, size_t len) { (void)data; (void)len; 
 #include <fcntl.h>
 #include "lvgl/lvgl.h"
 
-#define QUEUE_DEPTH 32
-#define MAX_CHUNK   512
+#define QUEUE_DEPTH 8
+#define MAX_CHUNK   (96 * 1024)
 #define RECONNECT_BACKOFF_MS 1000
 
 typedef struct {

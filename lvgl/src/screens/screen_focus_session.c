@@ -3,9 +3,11 @@
 #include "../ui.h"
 #include "../data/app_state.h"
 #include "src/home_config.h"
+#include "src/focus_image_stream.h"
 
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #define CLR_BG             0x000000
 #define CLR_TITLE          0xF2F2F2
@@ -47,6 +49,7 @@ static SessionPhase s_phase = PHASE_FOCUS;
 static uint32_t s_phase_total_seconds = 0;
 static uint32_t s_phase_remaining_seconds = 0;
 static uint32_t s_task_remaining_seconds = 0;
+static int s_task_id = -1;
 static char s_session_title[96] = {0};
 
 static uint32_t min_u32(uint32_t a, uint32_t b) {
@@ -104,6 +107,7 @@ static void cleanup_countdown_timer(void) {
 }
 
 static void stop_and_return_home(void) {
+    focus_image_stream_stop();
     cleanup_countdown_timer();
     ui_navigate_home();
 }
@@ -120,6 +124,7 @@ static void start_focus_seconds(uint32_t seconds, bool bonus_focus) {
     }
 
     set_controls_for_focus(true);
+    focus_image_stream_set_paused(false);
     app_state_set_status("Session running");
     update_timer_text();
 }
@@ -152,6 +157,7 @@ static void start_break_countdown(void) {
     }
 
     set_controls_for_focus(false);
+    focus_image_stream_set_paused(true);
     app_state_set_status("Break started");
     update_timer_text();
 }
@@ -375,6 +381,7 @@ static void pause_toggle_event(lv_event_t * e) {
     if (s_phase != PHASE_FOCUS) return;
 
     s_paused = !s_paused;
+    focus_image_stream_set_paused(s_paused);
 
     if (s_pause_label != NULL) {
         lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nPLAY" : "PAUSE");
@@ -389,7 +396,7 @@ static void stop_event(lv_event_t * e) {
     stop_and_return_home();
 }
 
-lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session) {
+lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session, int task_id) {
     cleanup_countdown_timer();
 
     memset(s_session_title, 0, sizeof(s_session_title));
@@ -400,7 +407,17 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     }
 
     s_is_quick = is_quick_session;
+    s_task_id = task_id;
     s_task_remaining_seconds = s_is_quick ? 0U : total_seconds;
+
+    if (s_is_quick) {
+        char session_key[64];
+        unsigned long now = (unsigned long)time(NULL);
+        snprintf(session_key, sizeof(session_key), "%d_%lu", HOME_API_USER_ID, now);
+        focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
+    } else if (s_task_id > 0) {
+        focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
+    }
 
     if (total_seconds == 0) {
         total_seconds = (uint32_t)HOME_TASK_FALLBACK_MINUTES * 60U;

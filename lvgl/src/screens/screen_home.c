@@ -281,7 +281,7 @@ static void refresh_timer_cb(lv_timer_t * timer) {
 
 static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index) {
     if (kind == SESSION_CONFIRM_KIND_QUICK) {
-        ui_navigate_focus_session("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, true);
+        ui_navigate_focus_session("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, true, -1);
         return;
     }
 
@@ -291,7 +291,7 @@ static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index
     const char * task_title = (task->subtitle[0] != '\0') ? task->subtitle : task->title;
     uint32_t minutes = (task->duration_minutes > 0) ? (uint32_t)task->duration_minutes : (uint32_t)HOME_TASK_FALLBACK_MINUTES;
 
-    ui_navigate_focus_session(task_title, minutes * 60U, false);
+    ui_navigate_focus_session(task_title, minutes * 60U, false, task->id);
 }
 
 static void quick_focus_event(lv_event_t * e) {
