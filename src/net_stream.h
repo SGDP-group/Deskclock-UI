@@ -21,4 +21,8 @@ void net_stream_stop(void);
  */
 bool net_stream_enqueue(const void * data, size_t len);
 
+/* Runtime diagnostics for stream transport health checks. */
+bool net_stream_is_connected(void);
+size_t net_stream_queue_depth(void);
+
 #endif /* NET_STREAM_H */

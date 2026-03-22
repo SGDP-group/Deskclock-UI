@@ -51,7 +51,24 @@ static uint32_t s_phase_total_seconds = 0;
 static uint32_t s_phase_remaining_seconds = 0;
 static uint32_t s_task_remaining_seconds = 0;
 static int s_task_id = -1;
+static uint32_t s_diag_tick_counter = 0;
 static char s_session_title[96] = {0};
+
+static void update_runtime_diagnostics_status(void) {
+    FocusImageStreamStats stream_stats = focus_image_stream_get_stats();
+    FocusCameraCaptureStats cam_stats = focus_camera_capture_get_stats();
+
+    char msg[128];
+    snprintf(msg,
+             sizeof(msg),
+             "sock:%d q:%lu cap:%lu tx:%lu rej:%lu",
+             stream_stats.connected ? 1 : 0,
+             (unsigned long)stream_stats.queue_depth,
+             (unsigned long)cam_stats.frames_captured,
+             (unsigned long)stream_stats.frames_enqueued,
+             (unsigned long)stream_stats.frames_rejected);
+    app_state_set_status(msg);
+}
 
 static uint32_t min_u32(uint32_t a, uint32_t b) {
     return (a < b) ? a : b;
@@ -371,6 +388,13 @@ static void countdown_timer_cb(lv_timer_t * timer) {
 
     update_timer_text();
 
+    if (s_phase == PHASE_FOCUS && !s_paused) {
+        s_diag_tick_counter++;
+        if ((s_diag_tick_counter % 5U) == 0U) {
+            update_runtime_diagnostics_status();
+        }
+    }
+
     if (s_phase_remaining_seconds == 0) {
         if (s_phase == PHASE_FOCUS) {
             handle_focus_finished();
@@ -403,6 +427,7 @@ static void stop_event(lv_event_t * e) {
 
 lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session, int task_id) {
     cleanup_countdown_timer();
+    s_diag_tick_counter = 0;
 
     memset(s_session_title, 0, sizeof(s_session_title));
     if (title != NULL && title[0] != '\0') {
@@ -415,16 +440,17 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     s_task_id = task_id;
     s_task_remaining_seconds = s_is_quick ? 0U : total_seconds;
 
+    bool stream_ok = true;
     if (s_is_quick) {
         char session_key[64];
         unsigned long now = (unsigned long)time(NULL);
         snprintf(session_key, sizeof(session_key), "%d_%lu", HOME_API_USER_ID, now);
-        focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
+        stream_ok = focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
     } else if (s_task_id > 0) {
-        focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
+        stream_ok = focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
     }
 
-    (void)focus_camera_capture_start();
+    bool camera_ok = focus_camera_capture_start();
 
     if (total_seconds == 0) {
         total_seconds = (uint32_t)HOME_TASK_FALLBACK_MINUTES * 60U;
@@ -492,6 +518,25 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     lv_obj_set_style_text_color(s_timer_label, lv_color_hex(CLR_TIMER), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(s_timer_label, 1, LV_PART_MAIN);
     lv_obj_align(s_timer_label, LV_ALIGN_CENTER, 0, 40);
+
+    lv_obj_t * status_label = lv_label_create(screen);
+    lv_obj_set_style_text_font(status_label, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(status_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
+    lv_obj_set_style_text_align(status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(status_label, LV_ALIGN_BOTTOM_MID, 0, -10);
+    g_lbl_status = status_label;
+
+    if (!stream_ok || !camera_ok) {
+        FocusImageStreamStats stream_stats = focus_image_stream_get_stats();
+        FocusCameraCaptureStats cam_stats = focus_camera_capture_get_stats();
+        char boot_msg[128];
+        snprintf(boot_msg,
+                 sizeof(boot_msg),
+                 "stream:%s cam:%s",
+                 stream_ok ? "ok" : stream_stats.last_error,
+                 camera_ok ? "ok" : cam_stats.last_error);
+        app_state_set_status(boot_msg);
+    }
 
     if (s_is_quick) {
         start_focus_seconds((uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, false);

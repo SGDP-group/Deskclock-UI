@@ -9,6 +9,8 @@
 bool net_stream_start(const char * host, uint16_t port) { (void)host; (void)port; return false; }
 void net_stream_stop(void) {}
 bool net_stream_enqueue(const void * data, size_t len) { (void)data; (void)len; return false; }
+bool net_stream_is_connected(void) { return false; }
+size_t net_stream_queue_depth(void) { return 0; }
 #else
 #include <unistd.h>
 #include <pthread.h>
@@ -215,6 +217,26 @@ bool net_stream_enqueue(const void * data, size_t len) {
     pthread_cond_signal(&q_cv);
     pthread_mutex_unlock(&q_mutex);
     return true;
+}
+
+bool net_stream_is_connected(void) {
+    bool connected = false;
+
+    pthread_mutex_lock(&q_mutex);
+    connected = (sock_fd >= 0);
+    pthread_mutex_unlock(&q_mutex);
+
+    return connected;
+}
+
+size_t net_stream_queue_depth(void) {
+    size_t depth = 0;
+
+    pthread_mutex_lock(&q_mutex);
+    depth = q_count;
+    pthread_mutex_unlock(&q_mutex);
+
+    return depth;
 }
 
 #endif /* _WIN32 */
