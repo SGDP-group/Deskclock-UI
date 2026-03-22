@@ -25,6 +25,8 @@ static lv_obj_t * g_lbl_time = NULL;
 static lv_obj_t * g_lbl_date = NULL;
 static lv_obj_t * g_lbl_footer = NULL;
 static lv_obj_t * g_task_list = NULL;
+static lv_obj_t * g_touch_popup = NULL;
+static lv_timer_t * g_touch_popup_timer = NULL;
 static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static int32_t g_card_height = 214;
 
@@ -233,9 +235,58 @@ static void refresh_timer_cb(lv_timer_t * timer) {
     start_due_today_fetch();
 }
 
+static void touch_popup_timer_cb(lv_timer_t * timer) {
+    (void)timer;
+    if (g_touch_popup != NULL) {
+        lv_obj_del(g_touch_popup);
+        g_touch_popup = NULL;
+    }
+    g_touch_popup_timer = NULL;
+}
+
+static void show_touch_test_popup(void) {
+    lv_obj_t * screen = lv_scr_act();
+    if (screen == NULL) {
+        return;
+    }
+
+    if (g_touch_popup_timer != NULL) {
+        lv_timer_del(g_touch_popup_timer);
+        g_touch_popup_timer = NULL;
+    }
+
+    if (g_touch_popup != NULL) {
+        lv_obj_del(g_touch_popup);
+        g_touch_popup = NULL;
+    }
+
+    g_touch_popup = lv_obj_create(screen);
+    lv_obj_set_size(g_touch_popup, 280, 90);
+    lv_obj_center(g_touch_popup);
+    lv_obj_set_style_bg_color(g_touch_popup, lv_color_hex(0x1A232A), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_touch_popup, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_touch_popup, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_touch_popup, lv_color_hex(0x43C28F), LV_PART_MAIN);
+    lv_obj_set_style_radius(g_touch_popup, 14, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_touch_popup, 10, LV_PART_MAIN);
+    lv_obj_clear_flag(g_touch_popup, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * popup_lbl = lv_label_create(g_touch_popup);
+    lv_label_set_text(popup_lbl, "Touch input detected");
+    lv_obj_set_style_text_font(popup_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(popup_lbl, lv_color_hex(0xE6FFF2), LV_PART_MAIN);
+    lv_obj_center(popup_lbl);
+
+    g_touch_popup_timer = lv_timer_create(touch_popup_timer_cb, 1200, NULL);
+    if (g_touch_popup_timer != NULL) {
+        lv_timer_set_repeat_count(g_touch_popup_timer, 1);
+    }
+}
+
 static void quick_focus_event(lv_event_t * e) {
     (void)e;
     app_state_set_status("Quick Focus ready");
+    show_touch_test_popup();
     if (g_lbl_footer != NULL) {
         lv_label_set_text(g_lbl_footer, g_app_state.status_message);
     }
