@@ -39,6 +39,7 @@ set(APP_SOURCES
     src/home_api_client.c
     src/net_stream.c
     src/fonts/Antonio_bold_56.c
+    lvgl/src/screens/screen_token.c
 )
 
 add_executable(lvgl_app
