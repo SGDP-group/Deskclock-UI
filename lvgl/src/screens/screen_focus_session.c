@@ -21,12 +21,12 @@
 #define CLR_POPUP_CONFIRM  0x3A9778
 #define CLR_POPUP_MIDDLE   0xA67C00
 
-#define SIDE_BTN_W         260
-#define SIDE_BTN_H         760
-#define SIDE_BTN_RADIUS    48
+#define SIDE_BTN_W         120
+#define SIDE_BTN_H         300
+#define SIDE_BTN_RADIUS    24
 
-#define POPUP_W            1260
-#define POPUP_H            760
+#define POPUP_W            640
+#define POPUP_H            380
 
 typedef enum {
     PHASE_FOCUS = 0,
@@ -184,7 +184,7 @@ static lv_obj_t * create_popup_container(void) {
     lv_obj_set_style_bg_color(popup, lv_color_hex(CLR_POPUP_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(popup, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(popup, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(popup, 30, LV_PART_MAIN);
+    lv_obj_set_style_radius(popup, 18, LV_PART_MAIN);
     lv_obj_set_style_pad_all(popup, 0, LV_PART_MAIN);
     lv_obj_set_style_clip_corner(popup, true, LV_PART_MAIN);
     lv_obj_clear_flag(popup, LV_OBJ_FLAG_SCROLLABLE);
@@ -232,11 +232,11 @@ static void show_break_popup(void) {
     lv_label_set_text(title, "Take a Break?");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 32);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 
     lv_obj_t * bonus_btn = lv_btn_create(popup);
-    lv_obj_set_size(bonus_btn, lv_pct(100), 280);
-    lv_obj_align(bonus_btn, LV_ALIGN_TOP_MID, 0, 120);
+    lv_obj_set_size(bonus_btn, lv_pct(100), 130);
+    lv_obj_align(bonus_btn, LV_ALIGN_TOP_MID, 0, 82);
     lv_obj_set_style_bg_color(bonus_btn, lv_color_hex(CLR_POPUP_MIDDLE), LV_PART_MAIN);
     lv_obj_set_style_border_width(bonus_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(bonus_btn, 0, LV_PART_MAIN);
@@ -250,7 +250,7 @@ static void show_break_popup(void) {
 
     lv_obj_t * actions = lv_obj_create(popup);
     lv_obj_remove_style_all(actions);
-    lv_obj_set_size(actions, lv_pct(100), 220);
+    lv_obj_set_size(actions, lv_pct(100), 110);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
@@ -294,20 +294,20 @@ static void show_resume_popup(void) {
     lv_label_set_text(title, "Resume Session?");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 40);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
 
     lv_obj_t * body = lv_label_create(popup);
-    lv_obj_set_width(body, POPUP_W - 120);
+    lv_obj_set_width(body, POPUP_W - 80);
     lv_obj_set_style_text_font(body, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(body, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
     lv_label_set_text_fmt(body, "%s", s_session_title);
-    lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 190);
+    lv_obj_align(body, LV_ALIGN_TOP_MID, 0, 108);
 
     lv_obj_t * actions = lv_obj_create(popup);
     lv_obj_remove_style_all(actions);
-    lv_obj_set_size(actions, lv_pct(100), 220);
+    lv_obj_set_size(actions, lv_pct(100), 110);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
@@ -441,11 +441,11 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     lv_obj_set_style_text_font(s_title_label, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_title_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_title_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(s_title_label, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_align(s_title_label, LV_ALIGN_TOP_MID, 0, 8);
 
     s_pause_btn = lv_btn_create(screen);
     lv_obj_set_size(s_pause_btn, SIDE_BTN_W, SIDE_BTN_H);
-    lv_obj_align(s_pause_btn, LV_ALIGN_LEFT_MID, 0, 42);
+    lv_obj_align(s_pause_btn, LV_ALIGN_LEFT_MID, 0, 20);
     lv_obj_set_style_bg_color(s_pause_btn, lv_color_hex(CLR_LEFT_BTN), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_pause_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_pause_btn, 0, LV_PART_MAIN);
@@ -460,7 +460,7 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
 
     lv_obj_t * stop_btn = lv_btn_create(screen);
     lv_obj_set_size(stop_btn, SIDE_BTN_W, SIDE_BTN_H);
-    lv_obj_align(stop_btn, LV_ALIGN_RIGHT_MID, 0, 42);
+    lv_obj_align(stop_btn, LV_ALIGN_RIGHT_MID, 0, 20);
     lv_obj_set_style_bg_color(stop_btn, lv_color_hex(CLR_RIGHT_BTN), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(stop_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(stop_btn, 0, LV_PART_MAIN);
@@ -474,8 +474,8 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     lv_obj_center(stop_label);
 
     s_ring = lv_arc_create(screen);
-    lv_obj_set_size(s_ring, 900, 900);
-    lv_obj_align(s_ring, LV_ALIGN_CENTER, 0, 80);
+    lv_obj_set_size(s_ring, 250, 250);
+    lv_obj_align(s_ring, LV_ALIGN_CENTER, 0, 40);
     lv_arc_set_rotation(s_ring, 270);
     lv_arc_set_bg_angles(s_ring, 0, 360);
     lv_arc_set_range(s_ring, 0, 100);
@@ -491,7 +491,7 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     lv_obj_set_style_text_font(s_timer_label, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_timer_label, lv_color_hex(CLR_TIMER), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(s_timer_label, 1, LV_PART_MAIN);
-    lv_obj_align(s_timer_label, LV_ALIGN_CENTER, 0, 80);
+    lv_obj_align(s_timer_label, LV_ALIGN_CENTER, 0, 40);
 
     if (s_is_quick) {
         start_focus_seconds((uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, false);

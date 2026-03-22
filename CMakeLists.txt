@@ -32,8 +32,8 @@ add_compile_definitions(
 if(WIN32)
     add_compile_definitions(
         LV_USE_SDL=1
-        LV_SDL_HOR_RES=1920
-        LV_SDL_VER_RES=1080
+        LV_SDL_HOR_RES=800
+        LV_SDL_VER_RES=480
     )
 else()
     add_compile_definitions(

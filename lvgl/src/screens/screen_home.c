@@ -46,52 +46,52 @@ extern const lv_font_t Antonio_bold_80;
 #define CLR_DOT_ACTIVE       0xFFFFFF
 
 /* -----------------------------------------------------------------------
- * Layout constants — 1920×1080, scaled ~3× from 640×480 React layout
+ * Layout constants — fixed 800x480 display
  * ----------------------------------------------------------------------- */
-#define SCREEN_W           1920
-#define SCREEN_H           1080
+#define SCREEN_W           800
+#define SCREEN_H           480
 
 /* Header region */
-#define HEADER_H           340
-#define HEADER_PAD_TOP     54
-#define HEADER_PAD_LEFT    84
-#define HEADER_PAD_RIGHT   60
+#define HEADER_H           160
+#define HEADER_PAD_TOP     16
+#define HEADER_PAD_LEFT    24
+#define HEADER_PAD_RIGHT   24
 
 /* Clock */
-#define CLOCK_LETTER_SPACE 40
+#define CLOCK_LETTER_SPACE 16
 #define DATE_FONT_SIZE     48   /* mapped to lv_font_montserrat_48 */
 
 /* Quick Focus button */
-#define QF_BTN_W           708
-#define QF_BTN_H           318
-#define QF_BTN_RADIUS      54
+#define QF_BTN_W           300
+#define QF_BTN_H           120
+#define QF_BTN_RADIUS      26
 
 /* Task carousel area */
-#define TASK_AREA_PAD_X    120
-#define TASK_CARD_H        530
-#define TASK_CARD_GAP      44
-#define TASK_CARD_RADIUS   90
+#define TASK_AREA_PAD_X    24
+#define TASK_CARD_H        210
+#define TASK_CARD_GAP      18
+#define TASK_CARD_RADIUS   32
 
 /* Card internals */
-#define CARD_ACCENT_W      48
-#define CARD_BODY_PAD_L    54
-#define CARD_BODY_PAD_T    60
-#define CARD_START_BTN_W   372
-#define CARD_START_BTN_R   84
+#define CARD_ACCENT_W      16
+#define CARD_BODY_PAD_L    20
+#define CARD_BODY_PAD_T    24
+#define CARD_START_BTN_W   190
+#define CARD_START_BTN_R   32
 
 /* Time badge inside card */
-#define TIME_BADGE_H       80
-#define TIME_BADGE_RADIUS  12
-#define TIME_BADGE_PAD_X   36
+#define TIME_BADGE_H       36
+#define TIME_BADGE_RADIUS  8
+#define TIME_BADGE_PAD_X   12
 
 /* Carousel indicator dots */
-#define DOT_SIZE           21
-#define DOT_ACTIVE_H       114
-#define DOT_RIGHT_MARGIN   36
-#define DOT_GAP            33
+#define DOT_SIZE           8
+#define DOT_ACTIVE_H       40
+#define DOT_RIGHT_MARGIN   14
+#define DOT_GAP            12
 
 /* Footer */
-#define FOOTER_H           40
+#define FOOTER_H           28
 
 /* -----------------------------------------------------------------------
  * Task card pool
@@ -323,8 +323,8 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     lv_obj_set_style_border_width(card, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(card, TASK_CARD_RADIUS, LV_PART_MAIN);
     lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(card, 60, LV_PART_MAIN);
-    lv_obj_set_style_shadow_ofs_y(card, 30, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(card, 16, LV_PART_MAIN);
+    lv_obj_set_style_shadow_ofs_y(card, 8, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(card, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(card, LV_OPA_40, LV_PART_MAIN);
     lv_obj_clear_flag(card, LV_OBJ_FLAG_SCROLLABLE);
@@ -383,7 +383,7 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     lv_obj_set_style_border_width(badge_cont, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_left(badge_cont, TIME_BADGE_PAD_X, LV_PART_MAIN);
     lv_obj_set_style_pad_right(badge_cont, TIME_BADGE_PAD_X, LV_PART_MAIN);
-    lv_obj_align(badge_cont, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T + 80);
+    lv_obj_align(badge_cont, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T + 74);
     lv_obj_clear_flag(badge_cont, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t * time_lbl = lv_label_create(badge_cont);
@@ -397,13 +397,13 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     lv_obj_set_style_text_font(subtitle, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(subtitle, lv_color_hex(CLR_TEXT_DESC), LV_PART_MAIN);
     lv_label_set_long_mode(subtitle, LV_LABEL_LONG_DOT);
-    lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T + 180);
+    lv_obj_align(subtitle, LV_ALIGN_TOP_LEFT, 0, CARD_BODY_PAD_T + 122);
 
     /* Status label (bottom of body) */
     lv_obj_t * status = lv_label_create(body);
     lv_obj_set_style_text_font(status, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(status, lv_color_hex(0xA8E7B4), LV_PART_MAIN);
-    lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -30);
+    lv_obj_align(status, LV_ALIGN_BOTTOM_LEFT, 0, -14);
 
     /* Store references */
     g_cards[idx].card       = card;
@@ -428,13 +428,13 @@ static void apply_list_scrollbar_style(lv_obj_t * list) {
     lv_obj_set_style_bg_color(list, lv_color_hex(CLR_DOT_ACTIVE), LV_PART_SCROLLBAR);
     lv_obj_set_style_bg_opa(list, LV_OPA_50, LV_PART_SCROLLBAR);
     lv_obj_set_style_radius(list, 10, LV_PART_SCROLLBAR);
-    lv_obj_set_style_width(list, 12, LV_PART_SCROLLBAR);
-    lv_obj_set_style_pad_right(list, 16, LV_PART_SCROLLBAR);
+    lv_obj_set_style_width(list, 8, LV_PART_SCROLLBAR);
+    lv_obj_set_style_pad_right(list, 8, LV_PART_SCROLLBAR);
 }
 
 /* -----------------------------------------------------------------------
  * screen_home_create — main entry point
- * Reconstructs the React Dashboard layout at 1920×1080:
+ * Reconstructs the React Dashboard layout at 800x480:
  *   ┌─────────────────────────────────────────┐
  *   │  HH : MM          [ ▶ Quick Focus ]     │  ← header
  *   │  SUN, 22 MAR                            │
@@ -468,11 +468,11 @@ lv_obj_t * screen_home_create(void) {
     /* ── Clock column (top-left) ── */
     lv_obj_t * time_col = lv_obj_create(screen);
     lv_obj_remove_style_all(time_col);
-    lv_obj_set_size(time_col, 1500, HEADER_H - HEADER_PAD_TOP);
+    lv_obj_set_size(time_col, 440, HEADER_H - HEADER_PAD_TOP);
     lv_obj_set_pos(time_col, HEADER_PAD_LEFT, HEADER_PAD_TOP);
 
     g_lbl_time = lv_label_create(time_col);
-    lv_obj_set_width(g_lbl_time, 1000); /* Prevent clipping by explicitly forcing wide bounding box */
+    lv_obj_set_width(g_lbl_time, 440); /* Keep large clock font visible without overrun on 800px screen */
     lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_80, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(CLR_TEXT_CLOCK), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(g_lbl_time, CLOCK_LETTER_SPACE, LV_PART_MAIN);
@@ -482,7 +482,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(CLR_TEXT_DATE), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(g_lbl_date, 7, LV_PART_MAIN);
-    lv_obj_align_to(g_lbl_date, g_lbl_time, LV_ALIGN_OUT_BOTTOM_LEFT, 4, 30);
+    lv_obj_align_to(g_lbl_date, g_lbl_time, LV_ALIGN_OUT_BOTTOM_LEFT, 2, 8);
 
     /* ── Quick Focus button (top-right) ── */
     lv_obj_t * quick_btn = lv_btn_create(screen);
@@ -494,7 +494,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_border_width(quick_btn, 2, LV_PART_MAIN);
     lv_obj_set_style_border_color(quick_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
     lv_obj_set_style_radius(quick_btn, QF_BTN_RADIUS, LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(quick_btn, 48, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(quick_btn, 20, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_30, LV_PART_MAIN);
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
@@ -511,8 +511,8 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_pos(g_task_list, TASK_AREA_PAD_X, task_y);
     lv_obj_set_style_bg_opa(g_task_list, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(g_task_list, 0, LV_PART_MAIN);
-    lv_obj_set_style_pad_top(g_task_list, 30, LV_PART_MAIN);
-    lv_obj_set_style_pad_bottom(g_task_list, 30, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(g_task_list, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(g_task_list, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_left(g_task_list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_right(g_task_list, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_gap(g_task_list, TASK_CARD_GAP, LV_PART_MAIN);
@@ -529,7 +529,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_text_font(g_lbl_empty_state, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_empty_state, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
     lv_obj_set_style_text_align(g_lbl_empty_state, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
-    lv_obj_align(g_lbl_empty_state, LV_ALIGN_CENTER, 0, 100);
+    lv_obj_align(g_lbl_empty_state, LV_ALIGN_CENTER, 0, 40);
     lv_obj_add_flag(g_lbl_empty_state, LV_OBJ_FLAG_HIDDEN);
 
     create_task_cards(g_task_list);

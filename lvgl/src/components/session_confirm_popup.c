@@ -3,9 +3,9 @@
 #include <string.h>
 #include <stdio.h>
 
-#define POPUP_W 1260
-#define POPUP_H 760
-#define ACTION_ROW_H 230
+#define POPUP_W 620
+#define POPUP_H 360
+#define ACTION_ROW_H 110
 
 #define ANIM_ENTER_MS 220
 #define ANIM_EXIT_MS 170
@@ -161,7 +161,7 @@ static void create_popup_shell(void) {
     lv_obj_set_style_bg_opa(s_panel, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_panel, 2, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_panel, lv_color_hex(CLR_PANEL_BORDER), LV_PART_MAIN);
-    lv_obj_set_style_radius(s_panel, 34, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_panel, 18, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_panel, 0, LV_PART_MAIN);
     lv_obj_set_style_clip_corner(s_panel, true, LV_PART_MAIN);
     lv_obj_clear_flag(s_panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -170,15 +170,15 @@ static void create_popup_shell(void) {
     lv_label_set_text(title, "Start Session?");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 42);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 
     s_body_label = lv_label_create(s_panel);
-    lv_obj_set_width(s_body_label, POPUP_W - 120);
+    lv_obj_set_width(s_body_label, POPUP_W - 80);
     lv_obj_set_style_text_font(s_body_label, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_body_label, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_body_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(s_body_label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(s_body_label, LV_ALIGN_TOP_MID, 0, 160);
+    lv_obj_align(s_body_label, LV_ALIGN_TOP_MID, 0, 94);
 
     lv_obj_t * actions = lv_obj_create(s_panel);
     lv_obj_remove_style_all(actions);
