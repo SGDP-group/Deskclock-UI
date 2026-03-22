@@ -5,7 +5,7 @@
 #define HOME_API_HOST "127.0.0.1"
 #define HOME_API_PORT 8080
 #define HOME_DEVICE_IP HOME_API_HOST
-#define HOME_API_CALLBACK_URL "http://127.0.0.1:8080/pairing/callback"
+#define HOME_API_CALLBACK_URL "http://127.0.0.1:9000/pairing/callback"
 #define HOME_API_USER_ID 0
 /* Set HOME_API_USER_ID to 0 to trigger the auth token flow. */
 
