@@ -16,17 +16,23 @@ add_compile_definitions(
     LV_FONT_MONTSERRAT_48=1
     LV_FONT_MONTSERRAT_56=1
 
-    # Enable SDL2 driver for Windows development
-    # On Pi, swap this for LV_USE_LINUX_FBDEV=1 (see Section 14)
-    LV_USE_SDL=1
-    LV_SDL_HOR_RES=640
-    LV_SDL_VER_RES=480
-
     LV_USE_LOG=1
 
     LV_USE_ASSERT_NULL=1
     LV_USE_ASSERT_MALLOC=1
 )
+
+if(WIN32)
+    add_compile_definitions(
+        LV_USE_SDL=1
+        LV_SDL_HOR_RES=640
+        LV_SDL_VER_RES=480
+    )
+else()
+    add_compile_definitions(
+        LV_USE_LINUX_FBDEV=1
+    )
+endif()
 
 include_directories(${CMAKE_SOURCE_DIR})
 
