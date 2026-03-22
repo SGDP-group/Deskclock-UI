@@ -13,6 +13,7 @@
 typedef struct {
     int id;
     bool completed;
+    int duration_minutes;
     char title[HOME_API_TASK_TITLE_LEN];
     char subtitle[HOME_API_TASK_SUBTITLE_LEN];
     char time_range[HOME_API_TASK_TIME_RANGE_LEN];

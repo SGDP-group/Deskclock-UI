@@ -21,6 +21,9 @@ static lv_obj_t * s_overlay = NULL;
 static lv_obj_t * s_panel = NULL;
 static lv_obj_t * s_body_label = NULL;
 static bool s_closing = false;
+static session_confirm_start_cb_t s_start_cb = NULL;
+static SessionConfirmKind s_kind = SESSION_CONFIRM_KIND_QUICK;
+static uint8_t s_task_index = 0xFF;
 
 static void popup_delete_now(void) {
     if (s_overlay != NULL) {
@@ -121,6 +124,20 @@ static void cancel_btn_event_cb(lv_event_t * e) {
     session_confirm_popup_close();
 }
 
+static void start_btn_event_cb(lv_event_t * e) {
+    (void)e;
+
+    if (s_start_cb != NULL) {
+        s_start_cb(s_kind, s_task_index);
+    }
+
+    session_confirm_popup_close();
+}
+
+void session_confirm_popup_set_start_cb(session_confirm_start_cb_t cb) {
+    s_start_cb = cb;
+}
+
 static void create_popup_shell(void) {
     lv_obj_t * screen = lv_scr_act();
     if (screen == NULL) return;
@@ -191,6 +208,7 @@ static void create_popup_shell(void) {
     lv_obj_set_style_bg_opa(start_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(start_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(start_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(start_btn, start_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * start_lbl = lv_label_create(start_btn);
     lv_label_set_text(start_lbl, "Start");
@@ -200,6 +218,9 @@ static void create_popup_shell(void) {
 }
 
 void session_confirm_popup_show_quick(void) {
+    s_kind = SESSION_CONFIRM_KIND_QUICK;
+    s_task_index = 0xFF;
+
     create_popup_shell();
     if (s_body_label != NULL) {
         lv_label_set_text(s_body_label, "Are you sure you want to start a quick session");
@@ -207,9 +228,12 @@ void session_confirm_popup_show_quick(void) {
     start_show_animation();
 }
 
-void session_confirm_popup_show_task(const char * subtask_name) {
+void session_confirm_popup_show_task(const char * subtask_name, uint8_t task_index) {
     char body[256];
     const char * safe_subtask = (subtask_name != NULL && subtask_name[0] != '\0') ? subtask_name : "this task";
+
+    s_kind = SESSION_CONFIRM_KIND_TASK;
+    s_task_index = task_index;
 
     create_popup_shell();
     if (s_body_label == NULL) return;

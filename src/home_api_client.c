@@ -237,9 +237,14 @@ static uint8_t parse_due_today_json(const char * body, HomeApiTask * tasks, uint
 
         HomeApiTask * t = &tasks[count];
         memset(t, 0, sizeof(*t));
+        t->duration_minutes = 30;
 
         json_get_int(obj_buf, "id", &t->id);
         json_get_bool(obj_buf, "completed", &t->completed);
+        json_get_int(obj_buf, "duration", &t->duration_minutes);
+        if (t->duration_minutes <= 0) {
+            t->duration_minutes = 30;
+        }
 
         if (!json_get_string(obj_buf, "name", t->title, sizeof(t->title))) {
             json_get_string(obj_buf, "taskName", t->title, sizeof(t->title));

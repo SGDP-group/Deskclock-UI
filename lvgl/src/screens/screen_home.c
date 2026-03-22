@@ -2,6 +2,7 @@
 #include "lvgl/lvgl.h"
 #include "../data/app_state.h"
 #include "../components/session_confirm_popup.h"
+#include "../ui.h"
 #include "src/home_api_client.h"
 #include "src/home_config.h"
 
@@ -242,6 +243,7 @@ static void fetch_due_today_now(void) {
         for (uint8_t i = 0; i < count; i++) {
             ui_tasks[i].id        = api_tasks[i].id;
             ui_tasks[i].completed = api_tasks[i].completed;
+            ui_tasks[i].duration_minutes = api_tasks[i].duration_minutes;
             copy_text_safe(ui_tasks[i].title,      sizeof(ui_tasks[i].title),      api_tasks[i].title);
             copy_text_safe(ui_tasks[i].subtitle,   sizeof(ui_tasks[i].subtitle),   api_tasks[i].subtitle);
             copy_text_safe(ui_tasks[i].time_range, sizeof(ui_tasks[i].time_range), api_tasks[i].time_range);
@@ -277,6 +279,21 @@ static void refresh_timer_cb(lv_timer_t * timer) {
     start_due_today_fetch();
 }
 
+static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index) {
+    if (kind == SESSION_CONFIRM_KIND_QUICK) {
+        ui_navigate_focus_session("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U);
+        return;
+    }
+
+    if (task_index >= g_app_state.home_task_count) return;
+
+    const HomeTask * task = &g_app_state.home_tasks[task_index];
+    const char * task_title = (task->subtitle[0] != '\0') ? task->subtitle : task->title;
+    uint32_t minutes = (task->duration_minutes > 0) ? (uint32_t)task->duration_minutes : (uint32_t)HOME_TASK_FALLBACK_MINUTES;
+
+    ui_navigate_focus_session(task_title, minutes * 60U);
+}
+
 static void quick_focus_event(lv_event_t * e) {
     (void)e;
     app_state_set_status("Quick Focus ready");
@@ -291,9 +308,9 @@ static void task_start_event(lv_event_t * e) {
     if (idx >= g_app_state.home_task_count) return;
 
     const HomeTask * task = &g_app_state.home_tasks[idx];
-    const char * subtask = (task->subtitle[0] != '\0') ? task->title : task->subtitle;
+    const char * subtask = (task->subtitle[0] != '\0') ? task->subtitle : task->title;
 
-    session_confirm_popup_show_task(subtask);
+    session_confirm_popup_show_task(subtask, (uint8_t)idx);
 }
 
 static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
@@ -528,6 +545,7 @@ lv_obj_t * screen_home_create(void) {
     g_lbl_status = g_lbl_footer;
     app_state_set_status("Ready");
     app_state_set_tasks_loading(true);
+    session_confirm_popup_set_start_cb(start_session_from_popup);
 
     /* ── Kick off timers and initial fetch ── */
     update_clock_labels();
