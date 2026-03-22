@@ -483,13 +483,6 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_border_width(dot_bottom, 0, LV_PART_MAIN);
     lv_obj_align(dot_bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
 
-    g_lbl_token = lv_label_create(screen);
-    lv_obj_set_style_text_font(g_lbl_token, &lv_font_montserrat_14, LV_PART_MAIN);
-    lv_obj_set_style_text_color(g_lbl_token, lv_color_hex(0xA0C9D5), LV_PART_MAIN);
-    lv_obj_set_pos(g_lbl_token, margin, sh - footer_h - 26);
-    lv_label_set_text(g_lbl_token, "");
-    lv_obj_add_flag(g_lbl_token, LV_OBJ_FLAG_HIDDEN);
-
     g_lbl_footer = lv_label_create(screen);
     lv_obj_set_style_text_font(g_lbl_footer, &lv_font_montserrat_14, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_footer, lv_color_hex(0x848C99), LV_PART_MAIN);
