@@ -8,6 +8,8 @@
 #include "../libs/qrcode/lv_qrcode.h"
 #include "src/home_api_client.h"
 #include "src/home_config.h"
+#include "src/pairing.h"
+#include <stdio.h>
 #include <string.h>
 
 static lv_obj_t * g_status_lbl = NULL;
@@ -121,6 +123,9 @@ lv_obj_t * screen_token_create(void) {
     lv_label_set_text(g_token_lbl, "");
 
     fetch_and_render_token(g_qr_container);
+
+    printf("[SCREEN_TOKEN] Token screen created. Starting pairing session...\n");
+    pairing_screen_start();
 
     return screen;
 }
