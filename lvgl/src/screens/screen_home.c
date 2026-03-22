@@ -291,23 +291,11 @@ static void task_start_event(lv_event_t * e) {
     if (idx >= g_app_state.home_task_count) return;
 
     const HomeTask * task = &g_app_state.home_tasks[idx];
-    const char * subtask = (task->subtitle[0] != '\0') ? task->subtitle : task->title;
+    const char * subtask = (task->subtitle[0] != '\0') ? task->title : task->subtitle;
 
     session_confirm_popup_show_task(subtask);
 }
 
-/* -----------------------------------------------------------------------
- * Task card builder — creates one card matching the React TaskCard layout
- *
- * Layout per card:
- *   ┌─────────────────────────────────────────────────────┐
- *   │ [accent] │   Title                  │  START  │
- *   │  strip   │   ┌─ time badge ──────┐  │  btn    │
- *   │  (green) │   │ ⏱ 09:00 – 10:30  │  │ (green) │
- *   │          │   └───────────────────┘  │         │
- *   │          │   Description text       │         │
- *   └─────────────────────────────────────────────────────┘
- * ----------------------------------------------------------------------- */
 static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     /* Card container */
     lv_obj_t * card = lv_obj_create(parent);
