@@ -43,6 +43,9 @@ static int32_t clampi(int32_t v, int32_t lo, int32_t hi) {
     return v;
 }
 
+/* -----------------------------------------------------------------------
+ * Component — like export default function HomeScreen()
+ * ----------------------------------------------------------------------- */
 static void copy_text_safe(char * dst, size_t dst_len, const char * src) {
     if (dst == NULL || dst_len == 0) {
         return;
@@ -135,6 +138,11 @@ static void render_loading_card(const char * title, const char * subtitle) {
 }
 
 static void render_task_cards(void) {
+    if (HOME_API_USER_ID <= 0) {
+        render_loading_card("Auth token mode", "Tasks disabled");
+        return;
+    }
+
     if (g_app_state.tasks_loading) {
         render_loading_card("Loading tasks", "Checking due-today");
         return;
@@ -183,6 +191,31 @@ static void clock_timer_cb(lv_timer_t * timer) {
 }
 
 static void fetch_due_today_now(void) {
+    if (HOME_API_USER_ID <= 0) {
+        char token[128] = {0};
+        bool got_token = home_api_fetch_auth_token(token, sizeof(token));
+
+        app_state_set_tasks_loading(false);
+        app_state_set_home_tasks(NULL, 0);
+
+        if (got_token) {
+            app_state_set_auth_token(token);
+            app_state_set_status("Auth token generated");
+        } else {
+            app_state_set_auth_token(NULL);
+            app_state_set_status("Token request failed");
+        }
+
+        render_task_cards();
+        if (g_lbl_footer != NULL) {
+            lv_label_set_text(g_lbl_footer, g_app_state.status_message);
+        }
+        return;
+    }
+
+    /* Clear any prior token when user id is configured. */
+    app_state_set_auth_token(NULL);
+
     HomeApiTask api_tasks[APP_MAX_HOME_TASKS];
     HomeTask ui_tasks[APP_MAX_HOME_TASKS];
     memset(api_tasks, 0, sizeof(api_tasks));
@@ -204,6 +237,7 @@ static void fetch_due_today_now(void) {
     app_state_set_tasks_loading(false);
     if (ok) {
         app_state_set_home_tasks(ui_tasks, count);
+        app_state_set_status("Due-today refreshed");
     } else {
         app_state_set_home_tasks(NULL, 0);
         app_state_set_status("Could not reach API");
@@ -394,6 +428,8 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_radius(layer_back, 22, LV_PART_MAIN);
     lv_obj_add_flag(layer_back, LV_OBJ_FLAG_HIDDEN);
 
+    /* Store the pointer so app_state.c can update this label from anywhere */
+    g_lbl_status = status_lbl;
     lv_obj_t * layer_mid = lv_obj_create(screen);
     lv_obj_set_size(layer_mid, sw - clampi((sw * 60) / 640, 30, 60), task_h - 10);
     lv_obj_set_pos(layer_mid, clampi((sw * 52) / 640, 26, 52), task_y + 8);
@@ -448,6 +484,13 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_bg_color(dot_bottom, lv_color_hex(0xD4DAE0), LV_PART_MAIN);
     lv_obj_set_style_border_width(dot_bottom, 0, LV_PART_MAIN);
     lv_obj_align(dot_bottom, LV_ALIGN_BOTTOM_MID, 0, 0);
+
+    g_lbl_token = lv_label_create(screen);
+    lv_obj_set_style_text_font(g_lbl_token, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_lbl_token, lv_color_hex(0xA0C9D5), LV_PART_MAIN);
+    lv_obj_set_pos(g_lbl_token, margin, sh - footer_h - 26);
+    lv_label_set_text(g_lbl_token, "");
+    lv_obj_add_flag(g_lbl_token, LV_OBJ_FLAG_HIDDEN);
 
     g_lbl_footer = lv_label_create(screen);
     lv_obj_set_style_text_font(g_lbl_footer, &lv_font_montserrat_14, LV_PART_MAIN);

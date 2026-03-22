@@ -37,6 +37,7 @@ typedef struct {
     bool     tasks_loading;
     uint8_t  home_task_count;
     HomeTask home_tasks[APP_MAX_HOME_TASKS];
+    char     auth_token[128];
 } AppState;
 
 /* Global instance — like createContext() + a default value */
@@ -50,6 +51,7 @@ extern AppState g_app_state;
 extern lv_obj_t * g_lbl_status;
 extern lv_obj_t * g_lbl_temperature;
 extern lv_obj_t * g_spinner;
+extern lv_obj_t * g_lbl_token;
 
 /* -----------------------------------------------------------------------
  * Setters — like dispatch(action) in Redux, or setState in React
@@ -60,5 +62,6 @@ void app_state_set_temperature(float temp);
 void app_state_set_loading(bool loading);
 void app_state_set_tasks_loading(bool loading);
 void app_state_set_home_tasks(const HomeTask * tasks, uint8_t count);
+void app_state_set_auth_token(const char * token);
 
 #endif /* APP_STATE_H */
