@@ -52,6 +52,7 @@ static uint32_t s_phase_remaining_seconds = 0;
 static uint32_t s_task_remaining_seconds = 0;
 static int s_task_id = -1;
 static uint32_t s_diag_tick_counter = 0;
+static uint32_t s_no_frame_ticks = 0;
 static char s_session_title[96] = {0};
 
 static void update_runtime_diagnostics_status(void) {
@@ -59,14 +60,29 @@ static void update_runtime_diagnostics_status(void) {
     FocusCameraCaptureStats cam_stats = focus_camera_capture_get_stats();
 
     char msg[128];
-    snprintf(msg,
-             sizeof(msg),
-             "sock:%d q:%lu cap:%lu tx:%lu rej:%lu",
-             stream_stats.connected ? 1 : 0,
-             (unsigned long)stream_stats.queue_depth,
-             (unsigned long)cam_stats.frames_captured,
-             (unsigned long)stream_stats.frames_enqueued,
-             (unsigned long)stream_stats.frames_rejected);
+
+    if (cam_stats.frames_captured == 0U && !cam_stats.camera_ready) {
+        s_no_frame_ticks++;
+    } else {
+        s_no_frame_ticks = 0U;
+    }
+
+    if (s_no_frame_ticks >= 2U) {
+        snprintf(msg,
+                 sizeof(msg),
+                 "cam:%s | stream:%s",
+                 cam_stats.last_error,
+                 stream_stats.last_error);
+    } else {
+        snprintf(msg,
+                 sizeof(msg),
+                 "sock:%d q:%lu cap:%lu tx:%lu rej:%lu",
+                 stream_stats.connected ? 1 : 0,
+                 (unsigned long)stream_stats.queue_depth,
+                 (unsigned long)cam_stats.frames_captured,
+                 (unsigned long)stream_stats.frames_enqueued,
+                 (unsigned long)stream_stats.frames_rejected);
+    }
     app_state_set_status(msg);
 }
 
@@ -428,6 +444,7 @@ static void stop_event(lv_event_t * e) {
 lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session, int task_id) {
     cleanup_countdown_timer();
     s_diag_tick_counter = 0;
+    s_no_frame_ticks = 0;
 
     memset(s_session_title, 0, sizeof(s_session_title));
     if (title != NULL && title[0] != '\0') {

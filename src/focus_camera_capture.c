@@ -465,6 +465,14 @@ static void * capture_worker(void * arg) {
 }
 
 bool focus_camera_capture_start(void) {
+    if (access(CAMERA_DEVICE, R_OK | W_OK) != 0) {
+        pthread_mutex_lock(&s_capture.lock);
+        s_capture.capture_failures++;
+        set_capture_error("camera access denied /dev/video0");
+        pthread_mutex_unlock(&s_capture.lock);
+        return false;
+    }
+
     pthread_mutex_lock(&s_capture.lock);
     if (s_capture.running) {
         s_capture.paused = false;
