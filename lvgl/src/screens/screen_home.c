@@ -13,7 +13,7 @@
 /* -----------------------------------------------------------------------
  * Fonts
  * ----------------------------------------------------------------------- */
-extern const lv_font_t Antonio_bold_80;
+extern const lv_font_t lv_font_montserrat_48 ;
 
 /* -----------------------------------------------------------------------
  * Design tokens — mirroring the React CSS variables
@@ -59,7 +59,7 @@ extern const lv_font_t Antonio_bold_80;
 
 /* Clock */
 #define CLOCK_LETTER_SPACE 16
-#define DATE_FONT_SIZE     48   /* mapped to lv_font_montserrat_48 */
+#define DATE_FONT_SIZE     32   /* mapped to lv_font_montserrat_48 */
 
 /* Quick Focus button */
 #define QF_BTN_W           300
@@ -473,13 +473,13 @@ lv_obj_t * screen_home_create(void) {
 
     g_lbl_time = lv_label_create(time_col);
     lv_obj_set_width(g_lbl_time, 440); /* Keep large clock font visible without overrun on 800px screen */
-    lv_obj_set_style_text_font(g_lbl_time, &Antonio_bold_80, LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(CLR_TEXT_CLOCK), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(g_lbl_time, CLOCK_LETTER_SPACE, LV_PART_MAIN);
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
     g_lbl_date = lv_label_create(time_col);
-    lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(CLR_TEXT_DATE), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(g_lbl_date, 7, LV_PART_MAIN);
     lv_obj_align_to(g_lbl_date, g_lbl_time, LV_ALIGN_OUT_BOTTOM_LEFT, 2, 8);
@@ -501,9 +501,13 @@ lv_obj_t * screen_home_create(void) {
 
     lv_obj_t * quick_lbl = lv_label_create(quick_btn);
     lv_label_set_text(quick_lbl, LV_SYMBOL_PLAY "  Quick Focus");
-    lv_obj_set_style_text_font(quick_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(quick_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(quick_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
     lv_obj_center(quick_lbl);
+    lv_obj_set_style_pad_left(quick_lbl, 20, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(quick_lbl, 20, LV_PART_MAIN);
+    lv_obj_set_style_pad_top(quick_lbl, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_bottom(quick_lbl, 12, LV_PART_MAIN);
 
     /* ── Task list (flex column, scrollable) ── */
     g_task_list = lv_obj_create(screen);
