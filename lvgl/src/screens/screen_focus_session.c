@@ -277,7 +277,7 @@ static void show_break_popup(void) {
 
     lv_obj_t * bonus_label = lv_label_create(bonus_btn);
     lv_label_set_text(bonus_label, "+5 Minutes");
-    lv_obj_set_style_text_font(bonus_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(bonus_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(bonus_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(bonus_label);
 
@@ -298,7 +298,7 @@ static void show_break_popup(void) {
 
     lv_obj_t * stop_label = lv_label_create(stop_btn);
     lv_label_set_text(stop_label, "Stop");
-    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(stop_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(stop_label);
 
@@ -311,7 +311,7 @@ static void show_break_popup(void) {
 
     lv_obj_t * okay_label = lv_label_create(okay_btn);
     lv_label_set_text(okay_label, "Okay!");
-    lv_obj_set_style_text_font(okay_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(okay_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(okay_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(okay_label);
 
@@ -355,7 +355,7 @@ static void show_resume_popup(void) {
 
     lv_obj_t * cancel_label = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_label, "Cancel");
-    lv_obj_set_style_text_font(cancel_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(cancel_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(cancel_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(cancel_label);
 
@@ -368,7 +368,7 @@ static void show_resume_popup(void) {
 
     lv_obj_t * resume_label = lv_label_create(resume_btn);
     lv_label_set_text(resume_label, "Resume");
-    lv_obj_set_style_text_font(resume_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(resume_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(resume_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(resume_label);
 
@@ -481,38 +481,44 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
 
     s_title_label = lv_label_create(screen);
     lv_label_set_text(s_title_label, s_session_title);
-    lv_obj_set_style_text_font(s_title_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_title_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_title_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_title_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_align(s_title_label, LV_ALIGN_TOP_MID, 0, 8);
 
     s_pause_btn = lv_btn_create(screen);
     lv_obj_set_size(s_pause_btn, SIDE_BTN_W, SIDE_BTN_H);
-    lv_obj_align(s_pause_btn, LV_ALIGN_LEFT_MID, 0, 20);
+    lv_obj_align(s_pause_btn, LV_ALIGN_LEFT_MID, 60, 20);
     lv_obj_set_style_bg_color(s_pause_btn, lv_color_hex(CLR_LEFT_BTN), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_pause_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_pause_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(s_pause_btn, SIDE_BTN_RADIUS, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(s_pause_btn, lv_color_hex(0x00FF00), LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(s_pause_btn, 30, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_opa(s_pause_btn, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_add_event_cb(s_pause_btn, pause_toggle_event, LV_EVENT_CLICKED, NULL);
 
     s_pause_label = lv_label_create(s_pause_btn);
     lv_label_set_text(s_pause_label, "PAUSE");
-    lv_obj_set_style_text_font(s_pause_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_pause_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_pause_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(s_pause_label);
 
     lv_obj_t * stop_btn = lv_btn_create(screen);
     lv_obj_set_size(stop_btn, SIDE_BTN_W, SIDE_BTN_H);
-    lv_obj_align(stop_btn, LV_ALIGN_RIGHT_MID, 0, 20);
+    lv_obj_align(stop_btn, LV_ALIGN_RIGHT_MID, -60, 20);
     lv_obj_set_style_bg_color(stop_btn, lv_color_hex(CLR_RIGHT_BTN), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(stop_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(stop_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(stop_btn, SIDE_BTN_RADIUS, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(stop_btn, lv_color_hex(0xFF0000), LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_width(stop_btn, 30, LV_STATE_PRESSED);
+    lv_obj_set_style_shadow_opa(stop_btn, LV_OPA_COVER, LV_STATE_PRESSED);
     lv_obj_add_event_cb(stop_btn, stop_event, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * stop_label = lv_label_create(stop_btn);
     lv_label_set_text(stop_label, LV_SYMBOL_STOP "\nSTOP");
-    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(stop_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(stop_label);
 
