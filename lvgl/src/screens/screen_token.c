@@ -129,3 +129,24 @@ lv_obj_t * screen_token_create(void) {
 
     return screen;
 }
+
+void screen_token_show_loading(void) {
+    if (g_qr_container != NULL) {
+        lv_obj_clean(g_qr_container);
+        g_qr_obj = NULL;
+
+        lv_obj_t * spinner = lv_spinner_create(g_qr_container);
+        lv_obj_set_size(spinner, 240, 240);
+        lv_spinner_set_anim_params(spinner, 1200, 60);
+        lv_obj_set_style_arc_color(spinner, lv_color_white(),       LV_PART_INDICATOR);
+        lv_obj_set_style_arc_width(spinner, 10,                     LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(spinner, lv_color_hex(0x333333), LV_PART_MAIN);
+        lv_obj_set_style_arc_width(spinner, 10,                     LV_PART_MAIN);
+    }
+    if (g_token_lbl != NULL) {
+        lv_label_set_text(g_token_lbl, "");
+    }
+    if (g_status_lbl != NULL) {
+        lv_label_set_text(g_status_lbl, "Pairing...");
+    }
+}

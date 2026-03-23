@@ -114,9 +114,6 @@ static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static lv_obj_t * g_lbl_empty_state = NULL;
 
 static bool g_fetch_inflight = false;
-static char g_last_time[16]  = {0};
-static char g_last_date[24]  = {0};
-
 static char g_last_time[16] = {0};
 static char g_last_date[24] = {0};
 
@@ -200,7 +197,7 @@ static void render_empty_state(const char * text) {
 
 static void render_task_cards(void) {
     if (HOME_API_USER_ID <= 0) {
-        render_loading_card("Auth token mode", "Tasks disabled");
+        render_empty_state("Not paired");
         return;
     }
 

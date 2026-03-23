@@ -399,21 +399,21 @@ bool callback_server_start(const char * session_id) {
     setsockopt(g_server_state.listen_socket, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
 #endif
 
-    /* Bind to localhost:9000 */
+    /* Bind to all interfaces so the remote API server can reach us */
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(CALLBACK_PORT);
-    inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr);
+    server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    printf("[CALLBACK] Binding to 127.0.0.1:%d...\n", CALLBACK_PORT);
+    printf("[CALLBACK] Binding to 0.0.0.0:%d...\n", CALLBACK_PORT);
     if (bind(g_server_state.listen_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) == SOCKET_ERROR) {
         printf("[CALLBACK] ERROR: bind() failed - port may already be in use\n");
         closesocket(g_server_state.listen_socket);
         g_server_state.listen_socket = INVALID_SOCKET;
         return false;
     }
-    printf("[CALLBACK] ✓ Successfully bound to 127.0.0.1:%d\n", CALLBACK_PORT);
+    printf("[CALLBACK] ✓ Successfully bound to 0.0.0.0:%d\n", CALLBACK_PORT);
 
     /* Listen for incoming connections */
     if (listen(g_server_state.listen_socket, 1) == SOCKET_ERROR) {
