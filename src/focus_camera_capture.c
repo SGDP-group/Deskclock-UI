@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <time.h>
 
@@ -34,13 +35,13 @@ FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
 #include <unistd.h>
 #include <linux/videodev2.h>
 
-#define CAMERA_DEVICE "/dev/video0"
+#define CAMERA_DEVICE_COUNT 4
 #define CAPTURE_WIDTH 640
 #define CAPTURE_HEIGHT 480
 #define CAPTURE_BUFFER_COUNT 4
 #define V4L2_TIMEOUT_SEC 2
 #define JPEG_QUALITY 70
-#define JPEG_MAX_BYTES (256 * 1024)
+#define JPEG_MAX_BYTES HOME_GAZE_STREAM_MAX_FRAME_BYTES
 
 typedef struct {
     void * start;
@@ -61,6 +62,7 @@ typedef struct {
     uint32_t v4l2_pixfmt;
     uint32_t width;
     uint32_t height;
+    char device_path[32];
     char last_error[96];
     MmapBuffer buffers[CAPTURE_BUFFER_COUNT];
     uint32_t buffer_count;
@@ -84,10 +86,28 @@ static CaptureState s_capture = {
     .lock = PTHREAD_MUTEX_INITIALIZER,
 };
 
+static int s_probe_start = 0;
+
 static void set_capture_error(const char * msg) {
     if (msg == NULL) return;
     strncpy(s_capture.last_error, msg, sizeof(s_capture.last_error) - 1U);
     s_capture.last_error[sizeof(s_capture.last_error) - 1U] = '\0';
+}
+
+static void set_capture_errorf(const char * fmt, ...) {
+    va_list args;
+
+    if (fmt == NULL) return;
+    va_start(args, fmt);
+    vsnprintf(s_capture.last_error, sizeof(s_capture.last_error), fmt, args);
+    va_end(args);
+    s_capture.last_error[sizeof(s_capture.last_error) - 1U] = '\0';
+}
+
+static const char * pixfmt_name(uint32_t pixfmt) {
+    if (pixfmt == V4L2_PIX_FMT_MJPEG) return "MJPEG";
+    if (pixfmt == V4L2_PIX_FMT_YUYV) return "YUYV";
+    return "UNKNOWN";
 }
 
 static uint64_t now_ms(void) {
@@ -190,12 +210,12 @@ static bool encode_yuyv_to_jpeg(const uint8_t * yuyv,
     return ok;
 }
 
-static bool camera_supports_format(uint32_t pixfmt) {
+static bool camera_supports_format_fd(int fd, uint32_t pixfmt) {
     struct v4l2_fmtdesc fmtdesc;
     memset(&fmtdesc, 0, sizeof(fmtdesc));
     fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
-    while (ioctl(s_capture.fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
+    while (ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
         if (fmtdesc.pixelformat == pixfmt) {
             return true;
         }
@@ -206,73 +226,95 @@ static bool camera_supports_format(uint32_t pixfmt) {
 }
 
 static bool camera_open(void) {
+    char candidate[32];
+    char last_reason[96] = "no camera device available";
     struct v4l2_capability cap;
     struct v4l2_format fmt;
     struct v4l2_streamparm parm;
     struct v4l2_requestbuffers req;
 
-    s_capture.fd = open(CAMERA_DEVICE, O_RDWR);
-    if (s_capture.fd < 0) {
-        set_capture_error("open /dev/video0 failed");
-        return false;
+    s_capture.fd = -1;
+    s_capture.buffer_count = 0;
+    s_capture.device_path[0] = '\0';
+
+    for (int n = 0; n < CAMERA_DEVICE_COUNT; n++) {
+        int i = (s_probe_start + n) % CAMERA_DEVICE_COUNT;
+        int fd = -1;
+        uint32_t requested_pixfmt = 0;
+
+        snprintf(candidate, sizeof(candidate), "/dev/video%d", i);
+        fd = open(candidate, O_RDWR);
+        if (fd < 0) {
+            continue;
+        }
+
+        memset(&cap, 0, sizeof(cap));
+        if (ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0) {
+            snprintf(last_reason, sizeof(last_reason), "%s querycap failed", candidate);
+            close(fd);
+            continue;
+        }
+
+        if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) || !(cap.capabilities & V4L2_CAP_STREAMING)) {
+            snprintf(last_reason, sizeof(last_reason), "%s lacks capture/streaming", candidate);
+            close(fd);
+            continue;
+        }
+
+        if (camera_supports_format_fd(fd, V4L2_PIX_FMT_MJPEG)) {
+            requested_pixfmt = V4L2_PIX_FMT_MJPEG;
+        } else if (camera_supports_format_fd(fd, V4L2_PIX_FMT_YUYV)) {
+            requested_pixfmt = V4L2_PIX_FMT_YUYV;
+        } else {
+            snprintf(last_reason, sizeof(last_reason), "%s lacks MJPEG/YUYV", candidate);
+            close(fd);
+            continue;
+        }
+
+        memset(&fmt, 0, sizeof(fmt));
+        fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        fmt.fmt.pix.width = CAPTURE_WIDTH;
+        fmt.fmt.pix.height = CAPTURE_HEIGHT;
+        fmt.fmt.pix.pixelformat = requested_pixfmt;
+        fmt.fmt.pix.field = V4L2_FIELD_NONE;
+
+        if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
+            snprintf(last_reason, sizeof(last_reason), "%s set fmt failed", candidate);
+            close(fd);
+            continue;
+        }
+
+        memset(&parm, 0, sizeof(parm));
+        parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        parm.parm.capture.timeperframe.numerator = 1;
+        parm.parm.capture.timeperframe.denominator = HOME_GAZE_STREAM_FPS;
+        (void)ioctl(fd, VIDIOC_S_PARM, &parm);
+
+        memset(&req, 0, sizeof(req));
+        req.count = CAPTURE_BUFFER_COUNT;
+        req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        req.memory = V4L2_MEMORY_MMAP;
+
+        if (ioctl(fd, VIDIOC_REQBUFS, &req) < 0 || req.count == 0 || req.count > CAPTURE_BUFFER_COUNT) {
+            snprintf(last_reason, sizeof(last_reason), "%s reqbufs failed", candidate);
+            close(fd);
+            continue;
+        }
+
+        s_capture.fd = fd;
+        s_capture.v4l2_pixfmt = fmt.fmt.pix.pixelformat;
+        s_capture.width = fmt.fmt.pix.width;
+        s_capture.height = fmt.fmt.pix.height;
+        s_capture.buffer_count = req.count;
+        s_probe_start = (i + 1) % CAMERA_DEVICE_COUNT;
+        strncpy(s_capture.device_path, candidate, sizeof(s_capture.device_path) - 1U);
+        s_capture.device_path[sizeof(s_capture.device_path) - 1U] = '\0';
+        set_capture_errorf("device:%s fmt:%s", s_capture.device_path, pixfmt_name(s_capture.v4l2_pixfmt));
+        return true;
     }
 
-    memset(&cap, 0, sizeof(cap));
-    if (ioctl(s_capture.fd, VIDIOC_QUERYCAP, &cap) < 0) {
-        set_capture_error("VIDIOC_QUERYCAP failed");
-        return false;
-    }
-
-    if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE) || !(cap.capabilities & V4L2_CAP_STREAMING)) {
-        set_capture_error("camera missing capture/streaming caps");
-        return false;
-    }
-
-    uint32_t requested_pixfmt = 0;
-    if (camera_supports_format(V4L2_PIX_FMT_MJPEG)) {
-        requested_pixfmt = V4L2_PIX_FMT_MJPEG;
-    } else if (camera_supports_format(V4L2_PIX_FMT_YUYV)) {
-        requested_pixfmt = V4L2_PIX_FMT_YUYV;
-    } else {
-        set_capture_error("camera lacks MJPEG/YUYV format");
-        return false;
-    }
-
-    memset(&fmt, 0, sizeof(fmt));
-    fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = CAPTURE_WIDTH;
-    fmt.fmt.pix.height = CAPTURE_HEIGHT;
-    fmt.fmt.pix.pixelformat = requested_pixfmt;
-    fmt.fmt.pix.field = V4L2_FIELD_NONE;
-
-    if (ioctl(s_capture.fd, VIDIOC_S_FMT, &fmt) < 0) {
-        set_capture_error("VIDIOC_S_FMT failed");
-        return false;
-    }
-
-    s_capture.v4l2_pixfmt = fmt.fmt.pix.pixelformat;
-    s_capture.width = fmt.fmt.pix.width;
-    s_capture.height = fmt.fmt.pix.height;
-
-    memset(&parm, 0, sizeof(parm));
-    parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    parm.parm.capture.timeperframe.numerator = 1;
-    parm.parm.capture.timeperframe.denominator = HOME_GAZE_STREAM_FPS;
-    (void)ioctl(s_capture.fd, VIDIOC_S_PARM, &parm);
-
-    memset(&req, 0, sizeof(req));
-    req.count = CAPTURE_BUFFER_COUNT;
-    req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    req.memory = V4L2_MEMORY_MMAP;
-
-    if (ioctl(s_capture.fd, VIDIOC_REQBUFS, &req) < 0 || req.count == 0) {
-        set_capture_error("VIDIOC_REQBUFS failed");
-        return false;
-    }
-
-    s_capture.buffer_count = req.count;
-    set_capture_error("ok");
-    return true;
+    set_capture_error(last_reason);
+    return false;
 }
 
 static bool camera_map_and_queue(void) {
@@ -308,7 +350,7 @@ static bool camera_map_and_queue(void) {
 static bool camera_stream_on(void) {
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(s_capture.fd, VIDIOC_STREAMON, &type) < 0) {
-        set_capture_error("VIDIOC_STREAMON failed");
+        set_capture_errorf("streamon failed on %s", s_capture.device_path[0] ? s_capture.device_path : "unknown device");
         return false;
     }
 
@@ -398,7 +440,7 @@ static bool capture_and_send_frame(void) {
 
         if (sent) {
             s_capture.frames_sent++;
-            set_capture_error("ok");
+            set_capture_errorf("ok:%s %s", s_capture.device_path, pixfmt_name(s_capture.v4l2_pixfmt));
         } else {
             s_capture.send_failures++;
             set_capture_error("stream send failed");
@@ -419,11 +461,36 @@ static bool capture_and_send_frame(void) {
 static void * capture_worker(void * arg) {
     (void)arg;
 
-    if (!camera_open() || !camera_map_and_queue() || !camera_stream_on()) {
+    char startup_error[96];
+    startup_error[0] = '\0';
+
+    for (int attempt = 0; attempt < CAMERA_DEVICE_COUNT; attempt++) {
+        if (!camera_open()) {
+            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
+            break;
+        }
+        if (!camera_map_and_queue()) {
+            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
+            camera_close();
+            continue;
+        }
+        if (!camera_stream_on()) {
+            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
+            camera_close();
+            continue;
+        }
+        startup_error[0] = '\0';
+        break;
+    }
+
+    if (s_capture.fd < 0) {
         pthread_mutex_lock(&s_capture.lock);
         s_capture.capture_failures++;
         s_capture.camera_ready = false;
         s_capture.running = false;
+        if (startup_error[0] != '\0') {
+            set_capture_error(startup_error);
+        }
         pthread_mutex_unlock(&s_capture.lock);
         camera_close();
         return NULL;
@@ -465,14 +532,6 @@ static void * capture_worker(void * arg) {
 }
 
 bool focus_camera_capture_start(void) {
-    if (access(CAMERA_DEVICE, R_OK | W_OK) != 0) {
-        pthread_mutex_lock(&s_capture.lock);
-        s_capture.capture_failures++;
-        set_capture_error("camera access denied /dev/video0");
-        pthread_mutex_unlock(&s_capture.lock);
-        return false;
-    }
-
     pthread_mutex_lock(&s_capture.lock);
     if (s_capture.running) {
         s_capture.paused = false;

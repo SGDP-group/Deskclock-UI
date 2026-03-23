@@ -19,9 +19,10 @@ size_t net_stream_queue_depth(void) { return 0; }
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include "lvgl/lvgl.h"
+#include "home_config.h"
 
 #define QUEUE_DEPTH 8
-#define MAX_CHUNK   (96 * 1024)
+#define MAX_CHUNK   HOME_GAZE_STREAM_MAX_PACKET_BYTES
 #define RECONNECT_BACKOFF_MS 1000
 
 typedef struct {
@@ -200,7 +201,7 @@ void net_stream_stop(void) {
 bool net_stream_enqueue(const void * data, size_t len) {
     if (!running || data == NULL || len == 0) return false;
 
-    if (len > MAX_CHUNK) len = MAX_CHUNK; /* trim to keep RAM bounded */
+    if (len > MAX_CHUNK) return false;
 
     pthread_mutex_lock(&q_mutex);
     if (q_count >= QUEUE_DEPTH) {

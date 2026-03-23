@@ -13,7 +13,7 @@
 #define FOCUS_STREAM_VERSION 1
 
 #define FOCUS_STREAM_MAX_HEADER 256
-#define FOCUS_STREAM_MAX_FRAME_PACKET (96 * 1024)
+#define FOCUS_STREAM_MAX_FRAME_PACKET HOME_GAZE_STREAM_MAX_PACKET_BYTES
 
 typedef enum {
     STREAM_NONE = 0,
@@ -138,7 +138,7 @@ bool focus_image_stream_send_jpeg(const uint8_t * jpeg_data, size_t jpeg_len, ui
     if (s_paused) {
         return false;
     }
-    if (jpeg_len > (size_t)(FOCUS_STREAM_MAX_FRAME_PACKET - 20)) {
+    if (jpeg_len > HOME_GAZE_STREAM_MAX_FRAME_BYTES) {
         s_frames_rejected++;
         set_last_error("jpeg larger than packet");
         return false;
