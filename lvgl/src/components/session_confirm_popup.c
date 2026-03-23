@@ -174,11 +174,11 @@ static void create_popup_shell(void) {
 
     s_body_label = lv_label_create(s_panel);
     lv_obj_set_width(s_body_label, POPUP_W - 80);
-    lv_obj_set_style_text_font(s_body_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(s_body_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_body_label, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_body_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(s_body_label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(s_body_label, LV_ALIGN_TOP_MID, 0, 94);
+    lv_obj_align(s_body_label, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t * actions = lv_obj_create(s_panel);
     lv_obj_remove_style_all(actions);
@@ -192,27 +192,35 @@ static void create_popup_shell(void) {
     lv_obj_set_size(cancel_btn, lv_pct(50), lv_pct(100));
     lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(CLR_CANCEL_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(cancel_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xff5151), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(cancel_btn, 20, LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(cancel_btn, lv_color_hex(0xff5151), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(cancel_btn, LV_OPA_60, LV_STATE_HOVERED | LV_PART_MAIN);
     lv_obj_set_style_border_width(cancel_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(cancel_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(cancel_btn, cancel_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * cancel_lbl = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_lbl, "Cancel");
-    lv_obj_set_style_text_font(cancel_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(cancel_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(cancel_lbl, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_center(cancel_lbl);
 
     lv_obj_t * start_btn = lv_btn_create(actions);
     lv_obj_set_size(start_btn, lv_pct(50), lv_pct(100));
     lv_obj_set_style_bg_color(start_btn, lv_color_hex(CLR_START_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(start_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(start_btn, LV_OPA_COVER, LV_PART_MAIN); 
+    lv_obj_set_style_bg_color(start_btn, lv_color_hex(0x00ac90), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(start_btn, 20, LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(start_btn, lv_color_hex(0x00ac90), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(start_btn, LV_OPA_60, LV_STATE_HOVERED | LV_PART_MAIN);
     lv_obj_set_style_border_width(start_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(start_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(start_btn, start_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * start_lbl = lv_label_create(start_btn);
     lv_label_set_text(start_lbl, "Start");
-    lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(start_lbl, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_center(start_lbl);
 }
