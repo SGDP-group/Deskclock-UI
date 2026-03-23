@@ -279,6 +279,27 @@ static void refresh_timer_cb(lv_timer_t * timer) {
     start_due_today_fetch();
 }
 
+static void task_list_scroll_cb(lv_event_t * e) {
+    lv_obj_t * list = lv_event_get_target(e);
+    if (g_lbl_footer == NULL) return;
+    
+    /* Get scroll position. Check if scrolled down at all */
+    int32_t scroll_y = lv_obj_get_scroll_y(list);
+    
+    /* Fade footer from full opacity down as we scroll */
+    /* We'll fully hide the footer after scrolling 50 pixels or so */
+    int32_t fade_distance = 50;
+    uint8_t opacity = LV_OPA_COVER;
+    
+    if (scroll_y > 0) {
+        /* Calculate fade: full opacity at 0, transparent at fade_distance+ */
+        opacity = (uint8_t)((LV_OPA_COVER * (fade_distance - scroll_y)) / fade_distance);
+        if (opacity < 0) opacity = 0;
+    }
+    
+    lv_obj_set_style_text_opa(g_lbl_footer, opacity, LV_PART_MAIN);
+}
+
 static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index) {
     if (kind == SESSION_CONFIRM_KIND_QUICK) {
         ui_navigate_focus_session("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, true, -1);
@@ -476,7 +497,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_t * time_col = lv_obj_create(screen);
     lv_obj_remove_style_all(time_col);
     lv_obj_set_size(time_col, 440, HEADER_H - HEADER_PAD_TOP);
-    lv_obj_set_pos(time_col, HEADER_PAD_LEFT, HEADER_PAD_TOP);
+    lv_obj_set_pos(time_col, HEADER_PAD_LEFT, HEADER_PAD_TOP + 25);
 
     g_lbl_time = lv_label_create(time_col);
     lv_obj_set_width(g_lbl_time, 440); /* Keep large clock font visible without overrun on 800px screen */
@@ -504,6 +525,9 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_style_shadow_width(quick_btn, 20, LV_PART_MAIN);
     lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x000000), LV_PART_MAIN);
     lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(quick_btn, 25, LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(quick_btn, lv_color_hex(0x10B981), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(quick_btn, LV_OPA_70, LV_STATE_HOVERED | LV_PART_MAIN);
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * quick_lbl = lv_label_create(quick_btn);
@@ -534,6 +558,7 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_set_flex_align(g_task_list, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
 
     apply_list_scrollbar_style(g_task_list);
+    lv_obj_add_event_cb(g_task_list, task_list_scroll_cb, LV_EVENT_SCROLL, NULL);
 
     /* Empty state label */
     g_lbl_empty_state = lv_label_create(screen);
