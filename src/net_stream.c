@@ -9,6 +9,8 @@
 bool net_stream_start(const char * host, uint16_t port) { (void)host; (void)port; return false; }
 void net_stream_stop(void) {}
 bool net_stream_enqueue(const void * data, size_t len) { (void)data; (void)len; return false; }
+bool net_stream_is_connected(void) { return false; }
+size_t net_stream_queue_depth(void) { return 0; }
 #else
 #include <unistd.h>
 #include <pthread.h>
@@ -17,9 +19,10 @@ bool net_stream_enqueue(const void * data, size_t len) { (void)data; (void)len; 
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include "lvgl/lvgl.h"
+#include "home_config.h"
 
-#define QUEUE_DEPTH 32
-#define MAX_CHUNK   512
+#define QUEUE_DEPTH 8
+#define MAX_CHUNK   HOME_GAZE_STREAM_MAX_PACKET_BYTES
 #define RECONNECT_BACKOFF_MS 1000
 
 typedef struct {
@@ -198,7 +201,7 @@ void net_stream_stop(void) {
 bool net_stream_enqueue(const void * data, size_t len) {
     if (!running || data == NULL || len == 0) return false;
 
-    if (len > MAX_CHUNK) len = MAX_CHUNK; /* trim to keep RAM bounded */
+    if (len > MAX_CHUNK) return false;
 
     pthread_mutex_lock(&q_mutex);
     if (q_count >= QUEUE_DEPTH) {
@@ -215,6 +218,26 @@ bool net_stream_enqueue(const void * data, size_t len) {
     pthread_cond_signal(&q_cv);
     pthread_mutex_unlock(&q_mutex);
     return true;
+}
+
+bool net_stream_is_connected(void) {
+    bool connected = false;
+
+    pthread_mutex_lock(&q_mutex);
+    connected = (sock_fd >= 0);
+    pthread_mutex_unlock(&q_mutex);
+
+    return connected;
+}
+
+size_t net_stream_queue_depth(void) {
+    size_t depth = 0;
+
+    pthread_mutex_lock(&q_mutex);
+    depth = q_count;
+    pthread_mutex_unlock(&q_mutex);
+
+    return depth;
 }
 
 #endif /* _WIN32 */

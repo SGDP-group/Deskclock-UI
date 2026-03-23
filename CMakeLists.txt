@@ -10,27 +10,53 @@ add_compile_definitions(
     LV_BUILD_EXAMPLES=0       # Don't compile LVGL's built-in examples (saves build time)
     LV_BUILD_DEMOS=0          # Don't compile LVGL's built-in demos
 
+    # Color depth must match SDL (32-bit XRGB8888)
+    LV_COLOR_DEPTH=32
+
+    # Use the system C library malloc instead of LVGL's tiny built-in pool (default is only 64KB)
+    LV_USE_STDLIB_MALLOC=1
+    LV_USE_STDLIB_STRING=1
+    LV_USE_STDLIB_SPRINTF=1
+
     # Fonts — enable only the sizes you need (each adds ~30-100KB to your binary)
     LV_FONT_MONTSERRAT_14=1
     LV_FONT_MONTSERRAT_24=1
     LV_FONT_MONTSERRAT_48=1
 
-    # Enable SDL2 driver for Windows development
-    # On Pi, swap this for LV_USE_LINUX_FBDEV=1 (see Section 14)
-    LV_USE_SDL=1
-    LV_SDL_HOR_RES=640
-    LV_SDL_VER_RES=480
-
     LV_USE_LOG=1
+
+    LV_USE_ASSERT_NULL=1
+    LV_USE_ASSERT_MALLOC=1
 )
+
+if(WIN32)
+    add_compile_definitions(
+        LV_USE_SDL=1
+        LV_SDL_HOR_RES=800
+        LV_SDL_VER_RES=480
+    )
+else()
+    add_compile_definitions(
+        LV_USE_LINUX_FBDEV=1
+        LV_USE_EVDEV=1
+    )
+endif()
 
 include_directories(${CMAKE_SOURCE_DIR})
 
 # Add LVGL — in v9 this is the only submodule you need
 add_subdirectory(lvgl)
 
-# Collect all your source files from src/
-file(GLOB_RECURSE APP_SOURCES "src/*.c")
+# App-level sources live outside the vendored lvgl/ directory by design.
+# Keep this explicit so new files are never skipped by stale CMake globs.
+set(APP_SOURCES
+    src/home_api_client.c
+    src/net_stream.c
+    src/focus_image_stream.c
+    src/focus_camera_capture.c
+    src/fonts/Antonio_bold_56.c
+    src/fonts/Antonio_bold_80.c
+)
 
 add_executable(lvgl_app
     main.c
@@ -40,6 +66,11 @@ add_executable(lvgl_app
 # In v9, link against lvgl::lvgl (namespaced target), not just plain lvgl
 find_package(Threads REQUIRED)
 target_link_libraries(lvgl_app lvgl::lvgl Threads::Threads)
+
+if(NOT WIN32)
+    find_package(JPEG REQUIRED)
+    target_link_libraries(lvgl_app JPEG::JPEG)
+endif()
 
 # On Windows with MinGW, also link SDL2 and its entry-point shim
 if(WIN32)
@@ -57,4 +88,7 @@ if(WIN32)
         list(REMOVE_ITEM LVGL_LIBS "SDL2main")
         set_target_properties(lvgl::lvgl PROPERTIES INTERFACE_LINK_LIBRARIES "${LVGL_LIBS}")
     endif()
+
+    target_link_libraries(lvgl_app ws2_32)
+    target_link_libraries(lvgl_app dbghelp)
 endif()
