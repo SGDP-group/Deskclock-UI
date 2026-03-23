@@ -122,7 +122,7 @@ static void set_controls_for_focus(bool focus_active) {
     if (focus_active) {
         lv_obj_clear_state(s_pause_btn, LV_STATE_DISABLED);
         if (s_pause_label != NULL) {
-            lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nPLAY" : "PAUSE");
+            lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nRESUME" : "PAUSE");
         }
     } else {
         lv_obj_add_state(s_pause_btn, LV_STATE_DISABLED);
@@ -429,7 +429,7 @@ static void pause_toggle_event(lv_event_t * e) {
     focus_image_stream_set_paused(s_paused);
 
     if (s_pause_label != NULL) {
-        lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nPLAY" : "PAUSE");
+        lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nRESUME" : "PAUSE");
     }
 
     app_state_set_status(s_paused ? "Session paused" : "Session resumed");
