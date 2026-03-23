@@ -171,7 +171,7 @@ int main(int argc, char *argv[]) {
     lv_init();
 
 #ifdef _WIN32
-    lv_display_t * disp  = lv_sdl_window_create(640, 480);
+    lv_display_t * disp  = lv_sdl_window_create(800, 480);
     lv_indev_t   * mouse = lv_sdl_mouse_create();
     (void)mouse;
 #else
