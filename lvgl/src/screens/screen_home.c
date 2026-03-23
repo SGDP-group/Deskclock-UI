@@ -52,13 +52,13 @@ extern const lv_font_t lv_font_montserrat_48 ;
 #define SCREEN_H           480
 
 /* Header region */
-#define HEADER_H           160
+#define HEADER_H           180
 #define HEADER_PAD_TOP     16
 #define HEADER_PAD_LEFT    24
 #define HEADER_PAD_RIGHT   24
 
 /* Clock */
-#define CLOCK_LETTER_SPACE 16
+#define CLOCK_LETTER_SPACE 26
 #define DATE_FONT_SIZE     32   /* mapped to lv_font_montserrat_48 */
 
 /* Quick Focus button */
@@ -337,6 +337,9 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     lv_obj_set_style_bg_opa(accent, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(accent, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(accent, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(accent, 30, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(accent, lv_color_hex(CLR_ACCENT_STRIP), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(accent, LV_OPA_70, LV_PART_MAIN);
     lv_obj_clear_flag(accent, LV_OBJ_FLAG_SCROLLABLE);
 
     /* START button (right side, full height, rounded) */
@@ -345,8 +348,12 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     lv_obj_align(start_slab, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(start_slab, lv_color_hex(CLR_ACCENT), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(start_slab, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(start_slab, lv_color_hex(0x00ac90), LV_STATE_HOVERED | LV_PART_MAIN);
     lv_obj_set_style_border_width(start_slab, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(start_slab, CARD_START_BTN_R, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(start_slab, 30, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(start_slab, lv_color_hex(CLR_ACCENT), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(start_slab, LV_OPA_70, LV_PART_MAIN);
     lv_obj_clear_flag(start_slab, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(start_slab, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(start_slab, task_start_event, LV_EVENT_CLICKED, (void *)(uintptr_t)idx);
@@ -542,7 +549,7 @@ lv_obj_t * screen_home_create(void) {
     g_lbl_footer = lv_label_create(screen);
     lv_obj_set_style_text_font(g_lbl_footer, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_footer, lv_color_hex(CLR_TEXT_MUTED), LV_PART_MAIN);
-    lv_obj_set_pos(g_lbl_footer, HEADER_PAD_LEFT, sh - FOOTER_H);
+    lv_obj_set_pos(g_lbl_footer, HEADER_PAD_LEFT, sh - FOOTER_H - 30);
     lv_label_set_text(g_lbl_footer, "Ready");
 
     /* ── Wire up global state ── */
