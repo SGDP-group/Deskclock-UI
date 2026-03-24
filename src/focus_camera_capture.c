@@ -35,11 +35,11 @@ FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
 #include <unistd.h>
 #include <linux/videodev2.h>
 
-#define CAMERA_DEVICE_COUNT 4
+#define CAMERA_DEVICE_COUNT 16
 #define CAPTURE_WIDTH 640
 #define CAPTURE_HEIGHT 480
 #define CAPTURE_BUFFER_COUNT 4
-#define V4L2_TIMEOUT_SEC 2
+#define V4L2_TIMEOUT_SEC 1
 #define JPEG_QUALITY 70
 #define JPEG_MAX_BYTES HOME_GAZE_STREAM_MAX_FRAME_BYTES
 
@@ -66,6 +66,7 @@ typedef struct {
     char last_error[96];
     MmapBuffer buffers[CAPTURE_BUFFER_COUNT];
     uint32_t buffer_count;
+    uint64_t last_publish_ms;
     pthread_mutex_t lock;
 } CaptureState;
 
@@ -83,10 +84,30 @@ static CaptureState s_capture = {
     .width = CAPTURE_WIDTH,
     .height = CAPTURE_HEIGHT,
     .buffer_count = 0,
+    .last_publish_ms = 0,
     .lock = PTHREAD_MUTEX_INITIALIZER,
 };
 
 static int s_probe_start = 0;
+
+static const char * s_camera_candidates[CAMERA_DEVICE_COUNT] = {
+    HOME_CAMERA_DEVICE,
+    "/dev/video0",
+    "/dev/video1",
+    "/dev/video2",
+    "/dev/video3",
+    "/dev/video13",
+    "/dev/video14",
+    "/dev/video15",
+    "/dev/video16",
+    "/dev/video20",
+    "/dev/video21",
+    "/dev/video22",
+    "/dev/video23",
+    "/dev/video10",
+    "/dev/video11",
+    "/dev/video12",
+};
 
 static void set_capture_error(const char * msg) {
     if (msg == NULL) return;
@@ -226,7 +247,6 @@ static bool camera_supports_format_fd(int fd, uint32_t pixfmt) {
 }
 
 static bool camera_open(void) {
-    char candidate[32];
     char last_reason[96] = "no camera device available";
     struct v4l2_capability cap;
     struct v4l2_format fmt;
@@ -241,8 +261,12 @@ static bool camera_open(void) {
         int i = (s_probe_start + n) % CAMERA_DEVICE_COUNT;
         int fd = -1;
         uint32_t requested_pixfmt = 0;
+        const char * candidate = s_camera_candidates[i];
 
-        snprintf(candidate, sizeof(candidate), "/dev/video%d", i);
+        if (candidate == NULL || candidate[0] == '\0') {
+            continue;
+        }
+
         fd = open(candidate, O_RDWR);
         if (fd < 0) {
             continue;
@@ -380,7 +404,7 @@ static void camera_close(void) {
     }
 }
 
-static bool capture_and_send_frame(void) {
+static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_cap) {
     struct v4l2_buffer buf;
     fd_set read_fds;
     struct timeval tv;
@@ -409,24 +433,33 @@ static bool capture_and_send_frame(void) {
 
     bool sent = false;
     if (buf.index < s_capture.buffer_count && buf.bytesused > 0) {
+        const uint64_t ts_ms = now_ms();
+        const uint64_t min_publish_interval_ms = (HOME_GAZE_STREAM_FPS > 0)
+                                               ? (1000ULL / (uint64_t)HOME_GAZE_STREAM_FPS)
+                                               : 200ULL;
+        const bool should_publish = (s_capture.last_publish_ms == 0ULL)
+                                 || ((ts_ms - s_capture.last_publish_ms) >= min_publish_interval_ms);
+
         s_capture.frames_captured++;
 
-        if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_MJPEG) {
+        if (!should_publish) {
+            sent = true;
+        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_MJPEG) {
             sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
                                                 (size_t)buf.bytesused,
-                                                now_ms(),
+                                                ts_ms,
                                                 s_capture.seq++);
         } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
-            uint8_t jpeg_buf[JPEG_MAX_BYTES];
             size_t jpeg_len = 0;
 
-            if (encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+            if (jpeg_scratch != NULL
+             && encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
                                     s_capture.width,
                                     s_capture.height,
-                                    jpeg_buf,
-                                    sizeof(jpeg_buf),
+                                    jpeg_scratch,
+                                    jpeg_scratch_cap,
                                     &jpeg_len)) {
-                sent = focus_image_stream_send_jpeg(jpeg_buf, jpeg_len, now_ms(), s_capture.seq++);
+                sent = focus_image_stream_send_jpeg(jpeg_scratch, jpeg_len, ts_ms, s_capture.seq++);
             } else {
                 s_capture.capture_failures++;
                 set_capture_error("YUYV->JPEG encode failed");
@@ -439,7 +472,10 @@ static bool capture_and_send_frame(void) {
         }
 
         if (sent) {
-            s_capture.frames_sent++;
+            if (should_publish) {
+                s_capture.frames_sent++;
+                s_capture.last_publish_ms = ts_ms;
+            }
             set_capture_errorf("ok:%s %s", s_capture.device_path, pixfmt_name(s_capture.v4l2_pixfmt));
         } else {
             s_capture.send_failures++;
@@ -462,6 +498,7 @@ static void * capture_worker(void * arg) {
     (void)arg;
 
     char startup_error[96];
+    uint8_t * jpeg_scratch = NULL;
     startup_error[0] = '\0';
 
     for (int attempt = 0; attempt < CAMERA_DEVICE_COUNT; attempt++) {
@@ -500,6 +537,17 @@ static void * capture_worker(void * arg) {
     s_capture.camera_ready = true;
     pthread_mutex_unlock(&s_capture.lock);
 
+    if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
+        jpeg_scratch = (uint8_t *)malloc(JPEG_MAX_BYTES);
+        if (jpeg_scratch == NULL) {
+            pthread_mutex_lock(&s_capture.lock);
+            s_capture.capture_failures++;
+            set_capture_error("jpeg scratch alloc failed");
+            s_capture.running = false;
+            pthread_mutex_unlock(&s_capture.lock);
+        }
+    }
+
     while (1) {
         bool running = false;
         bool paused = false;
@@ -516,9 +564,13 @@ static void * capture_worker(void * arg) {
             continue;
         }
 
-        if (!capture_and_send_frame()) {
+        if (!capture_and_send_frame(jpeg_scratch, JPEG_MAX_BYTES)) {
             usleep(20 * 1000);
         }
+    }
+
+    if (jpeg_scratch != NULL) {
+        free(jpeg_scratch);
     }
 
     camera_stream_off();
@@ -547,6 +599,7 @@ bool focus_camera_capture_start(void) {
     s_capture.frames_sent = 0;
     s_capture.capture_failures = 0;
     s_capture.send_failures = 0;
+    s_capture.last_publish_ms = 0;
     set_capture_error("starting camera");
     pthread_mutex_unlock(&s_capture.lock);
 

@@ -11,6 +11,8 @@ void net_stream_stop(void) {}
 bool net_stream_enqueue(const void * data, size_t len) { (void)data; (void)len; return false; }
 bool net_stream_is_connected(void) { return false; }
 size_t net_stream_queue_depth(void) { return 0; }
+NetStreamMode net_stream_mode(void) { return NET_STREAM_MODE_TCP; }
+uint32_t net_stream_fail_streak(void) { return 0; }
 #else
 #include <unistd.h>
 #include <pthread.h>
@@ -21,7 +23,7 @@ size_t net_stream_queue_depth(void) { return 0; }
 #include "lvgl/lvgl.h"
 #include "home_config.h"
 
-#define QUEUE_DEPTH 8
+#define QUEUE_DEPTH 16
 #define MAX_CHUNK   HOME_GAZE_STREAM_MAX_PACKET_BYTES
 #define RECONNECT_BACKOFF_MS 1000
 
@@ -43,6 +45,22 @@ static int sock_fd = -1;
 static bool running = false;
 static char target_host[64];
 static uint16_t target_port = 0;
+static NetStreamMode s_mode = NET_STREAM_MODE_TCP;
+static uint32_t s_tcp_fail_streak = 0;
+
+static void mark_tcp_success(void) {
+    s_tcp_fail_streak = 0;
+    s_mode = NET_STREAM_MODE_TCP;
+}
+
+static void mark_tcp_failure(void) {
+    s_tcp_fail_streak++;
+#if HOME_GAZE_RTSP_FALLBACK_ENABLED
+    if (s_tcp_fail_streak >= HOME_GAZE_RTSP_FAIL_THRESHOLD) {
+        s_mode = NET_STREAM_MODE_RTSP_FALLBACK;
+    }
+#endif
+}
 
 static void close_socket(void) {
     if (sock_fd >= 0) {
@@ -126,6 +144,7 @@ static void * worker_thread(void * arg) {
         if (sock_fd < 0) {
             sock_fd = dial_server();
             if (sock_fd < 0) {
+                mark_tcp_failure();
                 LV_LOG_WARN("net_stream: connect failed, retrying");
                 usleep(RECONNECT_BACKOFF_MS * 1000);
                 /* push chunk back to front of queue */
@@ -138,9 +157,11 @@ static void * worker_thread(void * arg) {
                 pthread_mutex_unlock(&q_mutex);
                 continue;
             }
+            mark_tcp_success();
         }
 
         if (!send_all(sock_fd, chunk.data, chunk.len)) {
+            mark_tcp_failure();
             LV_LOG_WARN("net_stream: send failed, reconnecting");
             close_socket();
             /* requeue the unsent chunk */
@@ -152,6 +173,8 @@ static void * worker_thread(void * arg) {
             }
             pthread_mutex_unlock(&q_mutex);
             usleep(RECONNECT_BACKOFF_MS * 1000);
+        } else {
+            mark_tcp_success();
         }
     }
 
@@ -173,6 +196,8 @@ bool net_stream_start(const char * host, uint16_t port) {
     target_port = port;
 
     q_head = q_tail = q_count = 0;
+    s_mode = NET_STREAM_MODE_TCP;
+    s_tcp_fail_streak = 0;
     running = true;
     int rc = pthread_create(&worker, NULL, worker_thread, NULL);
     pthread_mutex_unlock(&q_mutex);
@@ -228,6 +253,26 @@ bool net_stream_is_connected(void) {
     pthread_mutex_unlock(&q_mutex);
 
     return connected;
+}
+
+NetStreamMode net_stream_mode(void) {
+    NetStreamMode mode;
+
+    pthread_mutex_lock(&q_mutex);
+    mode = s_mode;
+    pthread_mutex_unlock(&q_mutex);
+
+    return mode;
+}
+
+uint32_t net_stream_fail_streak(void) {
+    uint32_t streak = 0;
+
+    pthread_mutex_lock(&q_mutex);
+    streak = s_tcp_fail_streak;
+    pthread_mutex_unlock(&q_mutex);
+
+    return streak;
 }
 
 size_t net_stream_queue_depth(void) {

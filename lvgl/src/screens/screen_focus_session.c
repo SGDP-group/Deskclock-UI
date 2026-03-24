@@ -5,6 +5,7 @@
 #include "src/home_config.h"
 #include "src/focus_image_stream.h"
 #include "src/focus_camera_capture.h"
+#include "src/net_stream.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -53,13 +54,45 @@ static uint32_t s_task_remaining_seconds = 0;
 static int s_task_id = -1;
 static uint32_t s_diag_tick_counter = 0;
 static uint32_t s_no_frame_ticks = 0;
+static uint32_t s_prev_frames_captured = 0;
+static uint32_t s_prev_frames_enqueued = 0;
 static char s_session_title[96] = {0};
 
 static void update_runtime_diagnostics_status(void) {
     FocusImageStreamStats stream_stats = focus_image_stream_get_stats();
     FocusCameraCaptureStats cam_stats = focus_camera_capture_get_stats();
 
-    char msg[128];
+    const uint32_t cap_delta = cam_stats.frames_captured - s_prev_frames_captured;
+    const uint32_t tx_delta = stream_stats.frames_enqueued - s_prev_frames_enqueued;
+
+    const char * cam_state = "STARTING";
+    const char * link_state = "DISCONNECTED";
+    const char * send_state = "IDLE";
+    char msg[196];
+
+    if (cam_stats.camera_ready) {
+        cam_state = cam_stats.paused ? "PAUSED" : "CAPTURING";
+    } else if (cam_stats.capture_failures > 0U) {
+        cam_state = "ERROR";
+    }
+
+    if (stream_stats.connected) {
+        link_state = "CONNECTED";
+    } else if (net_stream_fail_streak() > 0U) {
+        link_state = "RETRYING";
+    }
+
+    if (cam_stats.paused || s_phase != PHASE_FOCUS) {
+        send_state = "IDLE";
+    } else if (!cam_stats.camera_ready) {
+        send_state = "WAIT_CAMERA";
+    } else if (tx_delta > 0U) {
+        send_state = "SENDING";
+    } else if (!stream_stats.connected) {
+        send_state = "WAIT_LINK";
+    } else {
+        send_state = "WAIT_FRAME";
+    }
 
     if (cam_stats.frames_captured == 0U && !cam_stats.camera_ready) {
         s_no_frame_ticks++;
@@ -67,22 +100,29 @@ static void update_runtime_diagnostics_status(void) {
         s_no_frame_ticks = 0U;
     }
 
-    if (s_no_frame_ticks >= 2U) {
+    if (s_no_frame_ticks >= 2U && cam_stats.capture_failures > 0U) {
         snprintf(msg,
                  sizeof(msg),
-                 "cam:%s | stream:%s",
-                 cam_stats.last_error,
-                 stream_stats.last_error);
+                 "Cam:%s Link:%s Send:%s\ncam_err:%s",
+                 cam_state,
+                 link_state,
+                 send_state,
+                 cam_stats.last_error);
     } else {
         snprintf(msg,
                  sizeof(msg),
-                 "sock:%d q:%lu cap:%lu tx:%lu rej:%lu",
-                 stream_stats.connected ? 1 : 0,
-                 (unsigned long)stream_stats.queue_depth,
+                 "Cam:%s Link:%s Send:%s\ncap:%lu tx:%lu rej:%lu q:%lu",
+                 cam_state,
+                 link_state,
+                 send_state,
                  (unsigned long)cam_stats.frames_captured,
                  (unsigned long)stream_stats.frames_enqueued,
-                 (unsigned long)stream_stats.frames_rejected);
+                 (unsigned long)stream_stats.frames_rejected,
+                 (unsigned long)stream_stats.queue_depth);
     }
+
+    s_prev_frames_captured = cam_stats.frames_captured;
+    s_prev_frames_enqueued = stream_stats.frames_enqueued;
     app_state_set_status(msg);
 }
 
@@ -396,7 +436,11 @@ static void countdown_timer_cb(lv_timer_t * timer) {
     (void)timer;
 
     if (s_phase == PHASE_WAITING_POPUP) return;
-    if (s_phase == PHASE_FOCUS && s_paused) return;
+
+    if (s_phase == PHASE_FOCUS && s_paused) {
+        update_runtime_diagnostics_status();
+        return;
+    }
 
     if (s_phase_remaining_seconds > 0) {
         s_phase_remaining_seconds--;
@@ -406,9 +450,7 @@ static void countdown_timer_cb(lv_timer_t * timer) {
 
     if (s_phase == PHASE_FOCUS && !s_paused) {
         s_diag_tick_counter++;
-        if ((s_diag_tick_counter % 5U) == 0U) {
-            update_runtime_diagnostics_status();
-        }
+        update_runtime_diagnostics_status();
     }
 
     if (s_phase_remaining_seconds == 0) {
@@ -441,10 +483,25 @@ static void stop_event(lv_event_t * e) {
     stop_and_return_home();
 }
 
+static bool start_session_stream_key(void) {
+    char session_key[64];
+    unsigned long now = (unsigned long)time(NULL);
+
+    if (s_task_id > 0) {
+        snprintf(session_key, sizeof(session_key), "%d_task_%d_%lu", HOME_API_USER_ID, s_task_id, now);
+    } else {
+        snprintf(session_key, sizeof(session_key), "%d_quick_%lu", HOME_API_USER_ID, now);
+    }
+
+    return focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
+}
+
 lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session, int task_id) {
     cleanup_countdown_timer();
     s_diag_tick_counter = 0;
     s_no_frame_ticks = 0;
+    s_prev_frames_captured = 0;
+    s_prev_frames_enqueued = 0;
 
     memset(s_session_title, 0, sizeof(s_session_title));
     if (title != NULL && title[0] != '\0') {
@@ -457,15 +514,7 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     s_task_id = task_id;
     s_task_remaining_seconds = s_is_quick ? 0U : total_seconds;
 
-    bool stream_ok = true;
-    if (s_is_quick) {
-        char session_key[64];
-        unsigned long now = (unsigned long)time(NULL);
-        snprintf(session_key, sizeof(session_key), "%d_%lu", HOME_API_USER_ID, now);
-        stream_ok = focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
-    } else if (s_task_id > 0) {
-        stream_ok = focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
-    }
+    bool stream_ok = start_session_stream_key();
 
     bool camera_ok = focus_camera_capture_start();
 

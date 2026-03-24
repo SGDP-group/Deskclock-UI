@@ -5,6 +5,11 @@
 #include <stddef.h>
 #include <stdint.h>
 
+typedef enum {
+	NET_STREAM_MODE_TCP = 0,
+	NET_STREAM_MODE_RTSP_FALLBACK = 1,
+} NetStreamMode;
+
 /* Lightweight TCP streaming client tailored for Raspberry Pi Zero W.
  * Usage:
  *   net_stream_start("192.168.0.10", 5555);
@@ -24,5 +29,7 @@ bool net_stream_enqueue(const void * data, size_t len);
 /* Runtime diagnostics for stream transport health checks. */
 bool net_stream_is_connected(void);
 size_t net_stream_queue_depth(void);
+NetStreamMode net_stream_mode(void);
+uint32_t net_stream_fail_streak(void);
 
 #endif /* NET_STREAM_H */
