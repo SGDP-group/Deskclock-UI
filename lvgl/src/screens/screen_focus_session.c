@@ -100,7 +100,7 @@ static void update_runtime_diagnostics_status(void) {
         s_no_frame_ticks = 0U;
     }
 
-    if (s_no_frame_ticks >= 2U && cam_stats.capture_failures > 0U) {
+    if (cam_stats.frames_captured == 0U && cam_stats.capture_failures > 0U) {
         snprintf(msg,
                  sizeof(msg),
                  "Cam:%s Link:%s Send:%s\ncam_err:%s",

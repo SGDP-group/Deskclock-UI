@@ -456,7 +456,12 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
 
     int sel = select(s_capture.fd + 1, &read_fds, NULL, NULL, &tv);
     if (sel <= 0) {
-        set_capture_error(sel == 0 ? "camera frame timeout" : "select failed");
+        s_capture.capture_failures++;
+        if (sel == 0) {
+            set_capture_errorf("timeout:%s", s_capture.device_path[0] ? s_capture.device_path : "unknown");
+        } else {
+            set_capture_errorf("select_failed:%s", s_capture.device_path[0] ? s_capture.device_path : "unknown");
+        }
         return false;
     }
 
@@ -465,8 +470,9 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
     buf.memory = V4L2_MEMORY_MMAP;
 
     if (ioctl(s_capture.fd, VIDIOC_DQBUF, &buf) < 0) {
+        s_capture.capture_failures++;
         if (errno != EAGAIN) {
-            set_capture_error("VIDIOC_DQBUF failed");
+            set_capture_errorf("dqbuf_failed:%s", s_capture.device_path[0] ? s_capture.device_path : "unknown");
         }
         return false;
     }
@@ -586,7 +592,7 @@ static void * capture_worker(void * arg) {
         }
 
         if (!capture_and_send_frame(jpeg_scratch, JPEG_MAX_BYTES)) {
-            if (strncmp(s_capture.last_error, "camera frame timeout", 20U) == 0) {
+            if (strncmp(s_capture.last_error, "timeout:", 8U) == 0) {
                 consecutive_timeouts++;
             } else {
                 consecutive_timeouts = 0;
