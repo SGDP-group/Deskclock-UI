@@ -109,6 +109,10 @@ static const char * s_camera_candidates[CAMERA_DEVICE_COUNT] = {
     "/dev/video12",
 };
 
+static bool camera_map_and_queue(void);
+static bool camera_stream_on(void);
+static void camera_close(void);
+
 static void set_capture_error(const char * msg) {
     if (msg == NULL) return;
     strncpy(s_capture.last_error, msg, sizeof(s_capture.last_error) - 1U);
