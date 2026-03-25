@@ -3,9 +3,9 @@
 #include <string.h>
 #include <stdio.h>
 
-#define POPUP_W 1260
-#define POPUP_H 760
-#define ACTION_ROW_H 230
+#define POPUP_W 620
+#define POPUP_H 360
+#define ACTION_ROW_H 110
 
 #define ANIM_ENTER_MS 220
 #define ANIM_EXIT_MS 170
@@ -21,6 +21,9 @@ static lv_obj_t * s_overlay = NULL;
 static lv_obj_t * s_panel = NULL;
 static lv_obj_t * s_body_label = NULL;
 static bool s_closing = false;
+static session_confirm_start_cb_t s_start_cb = NULL;
+static SessionConfirmKind s_kind = SESSION_CONFIRM_KIND_QUICK;
+static uint8_t s_task_index = 0xFF;
 
 static void popup_delete_now(void) {
     if (s_overlay != NULL) {
@@ -121,6 +124,20 @@ static void cancel_btn_event_cb(lv_event_t * e) {
     session_confirm_popup_close();
 }
 
+static void start_btn_event_cb(lv_event_t * e) {
+    (void)e;
+
+    if (s_start_cb != NULL) {
+        s_start_cb(s_kind, s_task_index);
+    }
+
+    session_confirm_popup_close();
+}
+
+void session_confirm_popup_set_start_cb(session_confirm_start_cb_t cb) {
+    s_start_cb = cb;
+}
+
 static void create_popup_shell(void) {
     lv_obj_t * screen = lv_scr_act();
     if (screen == NULL) return;
@@ -144,7 +161,7 @@ static void create_popup_shell(void) {
     lv_obj_set_style_bg_opa(s_panel, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_panel, 2, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_panel, lv_color_hex(CLR_PANEL_BORDER), LV_PART_MAIN);
-    lv_obj_set_style_radius(s_panel, 34, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_panel, 18, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_panel, 0, LV_PART_MAIN);
     lv_obj_set_style_clip_corner(s_panel, true, LV_PART_MAIN);
     lv_obj_clear_flag(s_panel, LV_OBJ_FLAG_SCROLLABLE);
@@ -153,15 +170,15 @@ static void create_popup_shell(void) {
     lv_label_set_text(title, "Start Session?");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 42);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 
     s_body_label = lv_label_create(s_panel);
-    lv_obj_set_width(s_body_label, POPUP_W - 120);
-    lv_obj_set_style_text_font(s_body_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_width(s_body_label, POPUP_W - 80);
+    lv_obj_set_style_text_font(s_body_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_body_label, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_body_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(s_body_label, LV_LABEL_LONG_WRAP);
-    lv_obj_align(s_body_label, LV_ALIGN_TOP_MID, 0, 160);
+    lv_obj_align(s_body_label, LV_ALIGN_CENTER, 0, 0);
 
     lv_obj_t * actions = lv_obj_create(s_panel);
     lv_obj_remove_style_all(actions);
@@ -175,31 +192,43 @@ static void create_popup_shell(void) {
     lv_obj_set_size(cancel_btn, lv_pct(50), lv_pct(100));
     lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(CLR_CANCEL_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(cancel_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(0xff5151), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(cancel_btn, 20, LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(cancel_btn, lv_color_hex(0xff5151), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(cancel_btn, LV_OPA_60, LV_STATE_HOVERED | LV_PART_MAIN);
     lv_obj_set_style_border_width(cancel_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(cancel_btn, 0, LV_PART_MAIN);
     lv_obj_add_event_cb(cancel_btn, cancel_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * cancel_lbl = lv_label_create(cancel_btn);
     lv_label_set_text(cancel_lbl, "Cancel");
-    lv_obj_set_style_text_font(cancel_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(cancel_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(cancel_lbl, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_center(cancel_lbl);
 
     lv_obj_t * start_btn = lv_btn_create(actions);
     lv_obj_set_size(start_btn, lv_pct(50), lv_pct(100));
     lv_obj_set_style_bg_color(start_btn, lv_color_hex(CLR_START_BG), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(start_btn, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(start_btn, LV_OPA_COVER, LV_PART_MAIN); 
+    lv_obj_set_style_bg_color(start_btn, lv_color_hex(0x00ac90), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(start_btn, 20, LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(start_btn, lv_color_hex(0x00ac90), LV_STATE_HOVERED | LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(start_btn, LV_OPA_60, LV_STATE_HOVERED | LV_PART_MAIN);
     lv_obj_set_style_border_width(start_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(start_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(start_btn, start_btn_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * start_lbl = lv_label_create(start_btn);
     lv_label_set_text(start_lbl, "Start");
-    lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_font(start_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(start_lbl, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_center(start_lbl);
 }
 
 void session_confirm_popup_show_quick(void) {
+    s_kind = SESSION_CONFIRM_KIND_QUICK;
+    s_task_index = 0xFF;
+
     create_popup_shell();
     if (s_body_label != NULL) {
         lv_label_set_text(s_body_label, "Are you sure you want to start a quick session");
@@ -207,9 +236,12 @@ void session_confirm_popup_show_quick(void) {
     start_show_animation();
 }
 
-void session_confirm_popup_show_task(const char * subtask_name) {
+void session_confirm_popup_show_task(const char * subtask_name, uint8_t task_index) {
     char body[256];
     const char * safe_subtask = (subtask_name != NULL && subtask_name[0] != '\0') ? subtask_name : "this task";
+
+    s_kind = SESSION_CONFIRM_KIND_TASK;
+    s_task_index = task_index;
 
     create_popup_shell();
     if (s_body_label == NULL) return;

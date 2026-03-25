@@ -32,8 +32,8 @@ add_compile_definitions(
 if(WIN32)
     add_compile_definitions(
         LV_USE_SDL=1
-        LV_SDL_HOR_RES=1920
-        LV_SDL_VER_RES=1080
+        LV_SDL_HOR_RES=800
+        LV_SDL_VER_RES=480
     )
 else()
     add_compile_definitions(
@@ -52,6 +52,8 @@ add_subdirectory(lvgl)
 set(APP_SOURCES
     src/home_api_client.c
     src/net_stream.c
+    src/focus_image_stream.c
+    src/focus_camera_capture.c
     src/fonts/Antonio_bold_56.c
     src/fonts/Antonio_bold_80.c
 )
@@ -64,6 +66,11 @@ add_executable(lvgl_app
 # In v9, link against lvgl::lvgl (namespaced target), not just plain lvgl
 find_package(Threads REQUIRED)
 target_link_libraries(lvgl_app lvgl::lvgl Threads::Threads)
+
+if(NOT WIN32)
+    find_package(JPEG REQUIRED)
+    target_link_libraries(lvgl_app JPEG::JPEG)
+endif()
 
 # On Windows with MinGW, also link SDL2 and its entry-point shim
 if(WIN32)

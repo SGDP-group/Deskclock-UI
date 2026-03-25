@@ -20,6 +20,7 @@
 typedef struct {
     int      id;
     bool     completed;
+    int      duration_minutes;
     char     title[64];
     char     subtitle[96];
     char     time_range[24];
