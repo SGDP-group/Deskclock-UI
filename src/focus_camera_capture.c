@@ -136,6 +136,7 @@ static const char * s_camera_candidates[CAMERA_DEVICE_COUNT] = {
 static bool camera_map_and_queue(void);
 static bool camera_stream_on(void);
 static void camera_close(void);
+static void yuv_to_rgb(uint8_t y, int u, int v, uint8_t * r, uint8_t * g, uint8_t * b);
 
 static uint16_t rgb_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
     return (uint16_t)(((uint16_t)(r & 0xF8U) << 8U)
