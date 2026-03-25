@@ -9,6 +9,7 @@
 #include "styles/theme.h"
 #include "screens/screen_home.h"
 #include "screens/screen_focus_session.h"
+#include "screens/screen_camera_preview.h"
 
 static lv_obj_t * g_active_screen = NULL;
 
@@ -29,6 +30,10 @@ void ui_init(void) {
 
 void ui_navigate_focus_session(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id) {
     load_screen(screen_focus_session_create(title, duration_seconds, is_quick_session, task_id));
+}
+
+void ui_navigate_camera_preview(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id) {
+    load_screen(screen_camera_preview_create(title, duration_seconds, is_quick_session, task_id));
 }
 
 void ui_navigate_home(void) {
