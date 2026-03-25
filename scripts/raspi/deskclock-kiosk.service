@@ -1,0 +1,27 @@
+[Unit]
+Description=Deskclock LVGL kiosk app
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sdgp
+SupplementaryGroups=video input
+WorkingDirectory=/home/sdgp/UI/Deskclock-UI
+Environment=APP_DIR=/home/sdgp/UI/Deskclock-UI
+Environment=APP_BIN=./lvgl_app
+Environment=CAMERA_WRAPPER=/usr/bin/libcamerify
+ExecStartPre=/usr/bin/test -x /home/sdgp/UI/Deskclock-UI/lvgl_app
+ExecStart=/home/sdgp/UI/Deskclock-UI/scripts/raspi/start_kiosk.sh
+Restart=always
+RestartSec=2
+StandardInput=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
