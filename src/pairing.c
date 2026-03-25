@@ -18,8 +18,6 @@
 #include <unistd.h>
 #endif
 
-#define PAIRING_BASE_URL "http://127.0.0.1:8080"
-
 typedef struct {
     char * data;
     size_t len;
@@ -54,7 +52,7 @@ bool pairing_session_create(char * out_session_id, size_t out_len) {
     if (!curl) return false;
 
     char url[128];
-    snprintf(url, sizeof(url), "%s/pairing/session", PAIRING_BASE_URL);
+    snprintf(url, sizeof(url), "http://%s:%d/pairing/session", HOME_API_HOST, HOME_API_PORT);
     curl_easy_setopt(curl, CURLOPT_URL, url);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
