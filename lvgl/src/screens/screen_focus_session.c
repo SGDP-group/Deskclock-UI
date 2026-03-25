@@ -484,16 +484,25 @@ static void stop_event(lv_event_t * e) {
 }
 
 static bool start_session_stream_key(void) {
-    char session_key[64];
-    unsigned long now = (unsigned long)time(NULL);
-
-    if (s_task_id > 0) {
-        snprintf(session_key, sizeof(session_key), "%d_task_%d_%lu", HOME_API_USER_ID, s_task_id, now);
-    } else {
-        snprintf(session_key, sizeof(session_key), "%d_quick_%lu", HOME_API_USER_ID, now);
+    if (!s_is_quick && s_task_id > 0) {
+        return focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
     }
 
-    return focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
+    char session_key[64];
+    time_t now = time(NULL);
+    struct tm local_tm;
+
+#ifdef _WIN32
+    localtime_s(&local_tm, &now);
+#else
+    localtime_r(&now, &local_tm);
+#endif
+
+    strftime(session_key, sizeof(session_key), "%Y%m%d_%H%M%S", &local_tm);
+
+    char formatted_key[64];
+    snprintf(formatted_key, sizeof(formatted_key), "%d_%s", HOME_API_USER_ID, session_key);
+    return focus_image_stream_start_quick(HOME_API_USER_ID, formatted_key);
 }
 
 lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session, int task_id) {

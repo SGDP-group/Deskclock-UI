@@ -651,7 +651,7 @@ bool focus_camera_capture_start(void) {
     s_capture.running = true;
     s_capture.paused = false;
     s_capture.camera_ready = false;
-    s_capture.seq = 0;
+    s_capture.seq = 1;
     s_capture.frames_captured = 0;
     s_capture.frames_sent = 0;
     s_capture.capture_failures = 0;
