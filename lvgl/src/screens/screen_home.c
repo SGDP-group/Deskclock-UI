@@ -583,6 +583,10 @@ lv_obj_t * screen_home_create(void) {
     app_state_set_tasks_loading(true);
     session_confirm_popup_set_start_cb(start_session_from_popup);
 
+    /* Force first label render for newly created Home screen instances. */
+    memset(g_last_time, 0, sizeof(g_last_time));
+    memset(g_last_date, 0, sizeof(g_last_date));
+
     /* ── Kick off timers and initial fetch ── */
     update_clock_labels();
     render_task_cards();
