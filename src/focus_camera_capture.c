@@ -379,9 +379,16 @@ static bool camera_open(void) {
         }
 
         memset(&parm, 0, sizeof(parm));
+        uint32_t requested_fps = HOME_GAZE_STREAM_FPS;
+        if (HOME_CAMERA_PREVIEW_FPS > requested_fps) {
+            requested_fps = HOME_CAMERA_PREVIEW_FPS;
+        }
+        if (requested_fps == 0U) {
+            requested_fps = 1U;
+        }
         parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         parm.parm.capture.timeperframe.numerator = 1;
-        parm.parm.capture.timeperframe.denominator = HOME_GAZE_STREAM_FPS;
+        parm.parm.capture.timeperframe.denominator = requested_fps;
         (void)ioctl(fd, VIDIOC_S_PARM, &parm);
 
         memset(&req, 0, sizeof(req));
@@ -571,30 +578,29 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
                 sent = true;
             }
         } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
-            size_t jpeg_len = 0;
+            pthread_mutex_lock(&s_capture.lock);
+            copy_yuyv_to_preview_rgb565((const uint8_t *)s_capture.buffers[buf.index].start,
+                                        s_capture.width,
+                                        s_capture.height);
+            pthread_mutex_unlock(&s_capture.lock);
 
-            if (jpeg_scratch != NULL
-             && encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
-                                    s_capture.width,
-                                    s_capture.height,
-                                    jpeg_scratch,
-                                    jpeg_scratch_cap,
-                                    &jpeg_len)) {
-                pthread_mutex_lock(&s_capture.lock);
-                copy_yuyv_to_preview_rgb565((const uint8_t *)s_capture.buffers[buf.index].start,
-                                            s_capture.width,
-                                            s_capture.height);
-                pthread_mutex_unlock(&s_capture.lock);
-
-                if (stream_enabled) {
+            if (!should_publish || !stream_enabled) {
+                sent = true;
+            } else {
+                size_t jpeg_len = 0;
+                if (jpeg_scratch != NULL
+                 && encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                        s_capture.width,
+                                        s_capture.height,
+                                        jpeg_scratch,
+                                        jpeg_scratch_cap,
+                                        &jpeg_len)) {
                     sent = focus_image_stream_send_jpeg(jpeg_scratch, jpeg_len, ts_ms, s_capture.seq++);
                 } else {
-                    sent = true;
+                    s_capture.capture_failures++;
+                    set_capture_error("YUYV->JPEG encode failed");
+                    sent = false;
                 }
-            } else {
-                s_capture.capture_failures++;
-                set_capture_error("YUYV->JPEG encode failed");
-                sent = false;
             }
         } else {
             s_capture.capture_failures++;

@@ -3,6 +3,7 @@
 #include "../ui.h"
 #include "../data/app_state.h"
 #include "src/focus_camera_capture.h"
+#include "src/home_config.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -10,6 +11,7 @@
 #define PREVIEW_W 640
 #define PREVIEW_H 480
 #define PREVIEW_FRAME_BYTES (PREVIEW_W * PREVIEW_H * 2U)
+#define PREVIEW_TIMER_PERIOD_MS ((HOME_CAMERA_PREVIEW_FPS > 0) ? (1000U / HOME_CAMERA_PREVIEW_FPS) : 33U)
 
 #define CLR_BG 0x000000
 #define CLR_TEXT 0xF2F2F2
@@ -121,6 +123,7 @@ lv_obj_t * screen_camera_preview_create(const char * title, uint32_t duration_se
     s_canvas = lv_canvas_create(screen);
     lv_canvas_set_buffer(s_canvas, s_canvas_buf, PREVIEW_W, PREVIEW_H, LV_COLOR_FORMAT_RGB565);
     lv_obj_align(s_canvas, LV_ALIGN_CENTER, 0, 20);
+    lv_obj_move_foreground(title_lbl);
 
     lv_obj_t * go_back_btn = lv_btn_create(screen);
     lv_obj_set_size(go_back_btn, 180, 64);
@@ -163,6 +166,6 @@ lv_obj_t * screen_camera_preview_create(const char * title, uint32_t duration_se
         lv_label_set_text(s_status, "Preview ready. Adjust framing.");
     }
 
-    s_timer = lv_timer_create(preview_timer_cb, 200, NULL);
+    s_timer = lv_timer_create(preview_timer_cb, PREVIEW_TIMER_PERIOD_MS, NULL);
     return screen;
 }
