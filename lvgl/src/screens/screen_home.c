@@ -302,7 +302,7 @@ static void task_list_scroll_cb(lv_event_t * e) {
 
 static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index) {
     if (kind == SESSION_CONFIRM_KIND_QUICK) {
-        ui_navigate_focus_session("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, true, -1);
+        ui_navigate_camera_preview("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, true, -1);
         return;
     }
 
@@ -312,7 +312,7 @@ static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index
     const char * task_title = (task->subtitle[0] != '\0') ? task->subtitle : task->title;
     uint32_t minutes = (task->duration_minutes > 0) ? (uint32_t)task->duration_minutes : (uint32_t)HOME_TASK_FALLBACK_MINUTES;
 
-    ui_navigate_focus_session(task_title, minutes * 60U, false, task->id);
+    ui_navigate_camera_preview(task_title, minutes * 60U, false, task->id);
 }
 
 static void quick_focus_event(lv_event_t * e) {

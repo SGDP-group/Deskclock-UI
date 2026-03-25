@@ -526,6 +526,7 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     bool stream_ok = start_session_stream_key();
 
     bool camera_ok = focus_camera_capture_start();
+    focus_camera_capture_set_stream_enabled(true);
 
     if (total_seconds == 0) {
         total_seconds = (uint32_t)HOME_TASK_FALLBACK_MINUTES * 60U;

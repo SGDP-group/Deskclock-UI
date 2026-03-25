@@ -14,6 +14,9 @@ void ui_init(void);
 /* Navigate from home to an active focus session screen. */
 void ui_navigate_focus_session(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id);
 
+/* Navigate to camera preview before starting focus session. */
+void ui_navigate_camera_preview(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id);
+
 /* Return to a fresh home screen instance. */
 void ui_navigate_home(void);
 

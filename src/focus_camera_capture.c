@@ -12,8 +12,22 @@
 #ifdef _WIN32
 
 bool focus_camera_capture_start(void) { return false; }
+bool focus_camera_capture_start_preview(void) { return false; }
+void focus_camera_capture_set_stream_enabled(bool enabled) { (void)enabled; }
 void focus_camera_capture_set_paused(bool paused) { (void)paused; }
 void focus_camera_capture_stop(void) {}
+bool focus_camera_capture_copy_latest_preview_rgb565(uint8_t * out_buf,
+                                                     size_t out_cap,
+                                                     uint32_t * out_w,
+                                                     uint32_t * out_h,
+                                                     uint32_t * out_seq) {
+    (void)out_buf;
+    (void)out_cap;
+    (void)out_w;
+    (void)out_h;
+    (void)out_seq;
+    return false;
+}
 
 FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
     FocusCameraCaptureStats stats;
@@ -42,6 +56,7 @@ FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
 #define V4L2_TIMEOUT_SEC 1
 #define JPEG_QUALITY 70
 #define JPEG_MAX_BYTES HOME_GAZE_STREAM_MAX_FRAME_BYTES
+#define PREVIEW_MAX_BYTES (CAPTURE_WIDTH * CAPTURE_HEIGHT * 2U)
 
 typedef struct {
     void * start;
@@ -67,6 +82,11 @@ typedef struct {
     MmapBuffer buffers[CAPTURE_BUFFER_COUNT];
     uint32_t buffer_count;
     uint64_t last_publish_ms;
+    bool stream_enabled;
+    uint8_t latest_preview_rgb565[PREVIEW_MAX_BYTES];
+    uint32_t latest_preview_w;
+    uint32_t latest_preview_h;
+    uint32_t latest_preview_seq;
     pthread_mutex_t lock;
 } CaptureState;
 
@@ -85,6 +105,10 @@ static CaptureState s_capture = {
     .height = CAPTURE_HEIGHT,
     .buffer_count = 0,
     .last_publish_ms = 0,
+    .stream_enabled = true,
+    .latest_preview_w = 0,
+    .latest_preview_h = 0,
+    .latest_preview_seq = 0,
     .lock = PTHREAD_MUTEX_INITIALIZER,
 };
 
@@ -112,6 +136,48 @@ static const char * s_camera_candidates[CAMERA_DEVICE_COUNT] = {
 static bool camera_map_and_queue(void);
 static bool camera_stream_on(void);
 static void camera_close(void);
+static void yuv_to_rgb(uint8_t y, int u, int v, uint8_t * r, uint8_t * g, uint8_t * b);
+
+static uint16_t rgb_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return (uint16_t)(((uint16_t)(r & 0xF8U) << 8U)
+                    | ((uint16_t)(g & 0xFCU) << 3U)
+                    | ((uint16_t)(b >> 3U)));
+}
+
+static void copy_yuyv_to_preview_rgb565(const uint8_t * yuyv, uint32_t width, uint32_t height) {
+    if (yuyv == NULL || width == 0U || height == 0U) return;
+    if (width > CAPTURE_WIDTH || height > CAPTURE_HEIGHT) return;
+
+    uint32_t dst_idx = 0U;
+    for (uint32_t y = 0; y < height; y++) {
+        const uint8_t * src = yuyv + ((size_t)y * width * 2U);
+        for (uint32_t x = 0; x < width; x += 2U) {
+            uint8_t y0 = src[0];
+            uint8_t u = src[1];
+            uint8_t y1 = src[2];
+            uint8_t v = src[3];
+            uint8_t r, g, b;
+            uint16_t px;
+
+            yuv_to_rgb(y0, u, v, &r, &g, &b);
+            px = rgb_to_rgb565(r, g, b);
+            s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)(px & 0xFFU);
+            s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)((px >> 8U) & 0xFFU);
+
+            if (x + 1U < width) {
+                yuv_to_rgb(y1, u, v, &r, &g, &b);
+                px = rgb_to_rgb565(r, g, b);
+                s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)(px & 0xFFU);
+                s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)((px >> 8U) & 0xFFU);
+            }
+            src += 4;
+        }
+    }
+
+    s_capture.latest_preview_w = width;
+    s_capture.latest_preview_h = height;
+    s_capture.latest_preview_seq++;
+}
 
 static void set_capture_error(const char * msg) {
     if (msg == NULL) return;
@@ -313,9 +379,16 @@ static bool camera_open(void) {
         }
 
         memset(&parm, 0, sizeof(parm));
+        uint32_t requested_fps = HOME_GAZE_STREAM_FPS;
+        if (HOME_CAMERA_PREVIEW_FPS > requested_fps) {
+            requested_fps = HOME_CAMERA_PREVIEW_FPS;
+        }
+        if (requested_fps == 0U) {
+            requested_fps = 1U;
+        }
         parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         parm.parm.capture.timeperframe.numerator = 1;
-        parm.parm.capture.timeperframe.denominator = HOME_GAZE_STREAM_FPS;
+        parm.parm.capture.timeperframe.denominator = requested_fps;
         (void)ioctl(fd, VIDIOC_S_PARM, &parm);
 
         memset(&req, 0, sizeof(req));
@@ -478,6 +551,7 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
     }
 
     bool sent = false;
+    bool stream_enabled = false;
     if (buf.index < s_capture.buffer_count && buf.bytesused > 0) {
         const uint64_t ts_ms = now_ms();
         const uint64_t min_publish_interval_ms = (HOME_GAZE_STREAM_FPS > 0)
@@ -486,30 +560,47 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
         const bool should_publish = (s_capture.last_publish_ms == 0ULL)
                                  || ((ts_ms - s_capture.last_publish_ms) >= min_publish_interval_ms);
 
+        pthread_mutex_lock(&s_capture.lock);
+        stream_enabled = s_capture.stream_enabled;
+        pthread_mutex_unlock(&s_capture.lock);
+
         s_capture.frames_captured++;
 
         if (!should_publish) {
             sent = true;
         } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_MJPEG) {
-            sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
-                                                (size_t)buf.bytesused,
-                                                ts_ms,
-                                                s_capture.seq++);
-        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
-            size_t jpeg_len = 0;
-
-            if (jpeg_scratch != NULL
-             && encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
-                                    s_capture.width,
-                                    s_capture.height,
-                                    jpeg_scratch,
-                                    jpeg_scratch_cap,
-                                    &jpeg_len)) {
-                sent = focus_image_stream_send_jpeg(jpeg_scratch, jpeg_len, ts_ms, s_capture.seq++);
+            if (stream_enabled) {
+                sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                                    (size_t)buf.bytesused,
+                                                    ts_ms,
+                                                    s_capture.seq++);
             } else {
-                s_capture.capture_failures++;
-                set_capture_error("YUYV->JPEG encode failed");
-                sent = false;
+                sent = true;
+            }
+        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
+            pthread_mutex_lock(&s_capture.lock);
+            copy_yuyv_to_preview_rgb565((const uint8_t *)s_capture.buffers[buf.index].start,
+                                        s_capture.width,
+                                        s_capture.height);
+            pthread_mutex_unlock(&s_capture.lock);
+
+            if (!should_publish || !stream_enabled) {
+                sent = true;
+            } else {
+                size_t jpeg_len = 0;
+                if (jpeg_scratch != NULL
+                 && encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                        s_capture.width,
+                                        s_capture.height,
+                                        jpeg_scratch,
+                                        jpeg_scratch_cap,
+                                        &jpeg_len)) {
+                    sent = focus_image_stream_send_jpeg(jpeg_scratch, jpeg_len, ts_ms, s_capture.seq++);
+                } else {
+                    s_capture.capture_failures++;
+                    set_capture_error("YUYV->JPEG encode failed");
+                    sent = false;
+                }
             }
         } else {
             s_capture.capture_failures++;
@@ -657,6 +748,10 @@ bool focus_camera_capture_start(void) {
     s_capture.capture_failures = 0;
     s_capture.send_failures = 0;
     s_capture.last_publish_ms = 0;
+    s_capture.stream_enabled = true;
+    s_capture.latest_preview_w = 0;
+    s_capture.latest_preview_h = 0;
+    s_capture.latest_preview_seq = 0;
     set_capture_error("starting camera");
     pthread_mutex_unlock(&s_capture.lock);
 
@@ -671,6 +766,19 @@ bool focus_camera_capture_start(void) {
     }
 
     return true;
+}
+
+bool focus_camera_capture_start_preview(void) {
+    bool ok = focus_camera_capture_start();
+    if (!ok) return false;
+    focus_camera_capture_set_stream_enabled(false);
+    return true;
+}
+
+void focus_camera_capture_set_stream_enabled(bool enabled) {
+    pthread_mutex_lock(&s_capture.lock);
+    s_capture.stream_enabled = enabled;
+    pthread_mutex_unlock(&s_capture.lock);
 }
 
 void focus_camera_capture_set_paused(bool paused) {
@@ -689,6 +797,38 @@ void focus_camera_capture_stop(void) {
     if (was_running) {
         pthread_join(s_capture.worker, NULL);
     }
+}
+
+bool focus_camera_capture_copy_latest_preview_rgb565(uint8_t * out_buf,
+                                                     size_t out_cap,
+                                                     uint32_t * out_w,
+                                                     uint32_t * out_h,
+                                                     uint32_t * out_seq) {
+    size_t bytes;
+
+    if (out_buf == NULL || out_w == NULL || out_h == NULL || out_seq == NULL) {
+        return false;
+    }
+
+    pthread_mutex_lock(&s_capture.lock);
+    if (s_capture.latest_preview_w == 0U || s_capture.latest_preview_h == 0U || s_capture.latest_preview_seq == 0U) {
+        pthread_mutex_unlock(&s_capture.lock);
+        return false;
+    }
+
+    bytes = (size_t)s_capture.latest_preview_w * (size_t)s_capture.latest_preview_h * 2U;
+    if (bytes > out_cap) {
+        pthread_mutex_unlock(&s_capture.lock);
+        return false;
+    }
+
+    memcpy(out_buf, s_capture.latest_preview_rgb565, bytes);
+    *out_w = s_capture.latest_preview_w;
+    *out_h = s_capture.latest_preview_h;
+    *out_seq = s_capture.latest_preview_seq;
+    pthread_mutex_unlock(&s_capture.lock);
+
+    return true;
 }
 
 FocusCameraCaptureStats focus_camera_capture_get_stats(void) {

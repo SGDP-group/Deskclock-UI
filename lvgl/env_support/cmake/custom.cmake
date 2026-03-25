@@ -18,10 +18,10 @@ endif( LV_CONF_PATH )
 option(BUILD_SHARED_LIBS "Build shared libraries" OFF)
 
 # Set sources used for LVGL components
-file(GLOB_RECURSE SOURCES ${LVGL_ROOT_DIR}/src/*.c ${LVGL_ROOT_DIR}/src/*.S)
-file(GLOB_RECURSE EXAMPLE_SOURCES ${LVGL_ROOT_DIR}/examples/*.c)
-file(GLOB_RECURSE DEMO_SOURCES ${LVGL_ROOT_DIR}/demos/*.c)
-file(GLOB_RECURSE THORVG_SOURCES ${LVGL_ROOT_DIR}/src/libs/thorvg/*.cpp ${LVGL_ROOT_DIR}/src/others/vg_lite_tvg/*.cpp)
+file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS ${LVGL_ROOT_DIR}/src/*.c ${LVGL_ROOT_DIR}/src/*.S)
+file(GLOB_RECURSE EXAMPLE_SOURCES CONFIGURE_DEPENDS ${LVGL_ROOT_DIR}/examples/*.c)
+file(GLOB_RECURSE DEMO_SOURCES CONFIGURE_DEPENDS ${LVGL_ROOT_DIR}/demos/*.c)
+file(GLOB_RECURSE THORVG_SOURCES CONFIGURE_DEPENDS ${LVGL_ROOT_DIR}/src/libs/thorvg/*.cpp ${LVGL_ROOT_DIR}/src/others/vg_lite_tvg/*.cpp)
 
 # Build LVGL library
 add_library(lvgl ${SOURCES})
