@@ -341,6 +341,42 @@ static bool camera_open(void) {
     return false;
 }
 
+static bool initialize_camera_pipeline(char * startup_error, size_t startup_error_len) {
+    if (startup_error != NULL && startup_error_len > 0U) {
+        startup_error[0] = '\0';
+    }
+
+    for (int attempt = 0; attempt < CAMERA_DEVICE_COUNT; attempt++) {
+        if (!camera_open()) {
+            if (startup_error != NULL && startup_error_len > 0U) {
+                snprintf(startup_error, startup_error_len, "%s", s_capture.last_error);
+            }
+            break;
+        }
+        if (!camera_map_and_queue()) {
+            if (startup_error != NULL && startup_error_len > 0U) {
+                snprintf(startup_error, startup_error_len, "%s", s_capture.last_error);
+            }
+            camera_close();
+            continue;
+        }
+        if (!camera_stream_on()) {
+            if (startup_error != NULL && startup_error_len > 0U) {
+                snprintf(startup_error, startup_error_len, "%s", s_capture.last_error);
+            }
+            camera_close();
+            continue;
+        }
+
+        if (startup_error != NULL && startup_error_len > 0U) {
+            startup_error[0] = '\0';
+        }
+        return true;
+    }
+
+    return false;
+}
+
 static bool camera_map_and_queue(void) {
     for (uint32_t i = 0; i < s_capture.buffer_count; i++) {
         struct v4l2_buffer buf;
@@ -499,28 +535,9 @@ static void * capture_worker(void * arg) {
 
     char startup_error[96];
     uint8_t * jpeg_scratch = NULL;
-    startup_error[0] = '\0';
+    int consecutive_timeouts = 0;
 
-    for (int attempt = 0; attempt < CAMERA_DEVICE_COUNT; attempt++) {
-        if (!camera_open()) {
-            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
-            break;
-        }
-        if (!camera_map_and_queue()) {
-            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
-            camera_close();
-            continue;
-        }
-        if (!camera_stream_on()) {
-            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
-            camera_close();
-            continue;
-        }
-        startup_error[0] = '\0';
-        break;
-    }
-
-    if (s_capture.fd < 0) {
+    if (!initialize_camera_pipeline(startup_error, sizeof(startup_error))) {
         pthread_mutex_lock(&s_capture.lock);
         s_capture.capture_failures++;
         s_capture.camera_ready = false;
@@ -565,7 +582,37 @@ static void * capture_worker(void * arg) {
         }
 
         if (!capture_and_send_frame(jpeg_scratch, JPEG_MAX_BYTES)) {
+            if (strncmp(s_capture.last_error, "camera frame timeout", 20U) == 0) {
+                consecutive_timeouts++;
+            } else {
+                consecutive_timeouts = 0;
+            }
+
+            if (consecutive_timeouts >= 4) {
+                consecutive_timeouts = 0;
+
+                camera_stream_off();
+                camera_close();
+
+                pthread_mutex_lock(&s_capture.lock);
+                s_capture.camera_ready = false;
+                pthread_mutex_unlock(&s_capture.lock);
+
+                if (initialize_camera_pipeline(startup_error, sizeof(startup_error))) {
+                    pthread_mutex_lock(&s_capture.lock);
+                    s_capture.camera_ready = true;
+                    pthread_mutex_unlock(&s_capture.lock);
+                } else {
+                    pthread_mutex_lock(&s_capture.lock);
+                    s_capture.capture_failures++;
+                    set_capture_error(startup_error[0] != '\0' ? startup_error : "camera reinit failed");
+                    pthread_mutex_unlock(&s_capture.lock);
+                }
+            }
+
             usleep(20 * 1000);
+        } else {
+            consecutive_timeouts = 0;
         }
     }
 
