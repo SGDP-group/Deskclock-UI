@@ -388,6 +388,47 @@ static bool http_response_ok(const char * response) {
     return true;
 }
 
+/*
+ * Decode a chunked HTTP body in-place.
+ * `buf` points to the first byte after the \r\n\r\n header separator.
+ * Returns the length of the decoded data (always <= len).
+ * The result is NUL-terminated.
+ */
+static size_t http_decode_chunked(char * buf, size_t len) {
+    char * src = buf;
+    char * dst = buf;
+    char * end = buf + len;
+
+    while (src < end) {
+        /* Read chunk-size hex line */
+        char * eol = strstr(src, "\r\n");
+        if (eol == NULL) {
+            break;
+        }
+        /* Parse hex size; ignore chunk extensions after ';' */
+        unsigned long chunk_size = 0;
+        if (sscanf(src, "%lx", &chunk_size) != 1) {
+            break;
+        }
+        src = eol + 2; /* skip past CRLF after size line */
+        if (chunk_size == 0) {
+            break; /* last chunk */
+        }
+        if (src + chunk_size > (char *)end) {
+            chunk_size = (unsigned long)(end - src); /* clamp to available */
+        }
+        memmove(dst, src, chunk_size);
+        dst += chunk_size;
+        src += chunk_size;
+        /* skip trailing CRLF after chunk data */
+        if (src + 2 <= end && src[0] == '\r' && src[1] == '\n') {
+            src += 2;
+        }
+    }
+    *dst = '\0';
+    return (size_t)(dst - buf);
+}
+
 static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
     if (body_out == NULL || body_out_len == 0) {
         return false;
@@ -421,8 +462,14 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
     }
 
     body += 4;
+    size_t body_len = strlen(body);
     strncpy(body_out, body, body_out_len - 1);
     body_out[body_out_len - 1] = '\0';
+
+    if (body_len > 0 && strstr(response, "Transfer-Encoding: chunked") != NULL) {
+        http_decode_chunked(body_out, strlen(body_out));
+    }
+
     return true;
 }
 
@@ -462,8 +509,14 @@ static bool http_post_auth_token(char * body_out, size_t body_out_len) {
     }
 
     body += 4;
+    size_t body_len = strlen(body);
     strncpy(body_out, body, body_out_len - 1);
     body_out[body_out_len - 1] = '\0';
+
+    if (body_len > 0 && strstr(response, "Transfer-Encoding: chunked") != NULL) {
+        http_decode_chunked(body_out, strlen(body_out));
+    }
+
     return true;
 }
 
