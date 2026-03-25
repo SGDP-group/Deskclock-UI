@@ -365,6 +365,29 @@ static uint8_t parse_due_today_json(const char * body, HomeApiTask * tasks, uint
     return count;
 }
 
+static bool http_response_ok(const char * response) {
+    /* Expect first line: "HTTP/1.x NNN ..."; accept any 2xx status. */
+    const char * p = response;
+    if (strncmp(p, "HTTP/", 5) != 0) {
+        return false;
+    }
+    /* Skip "HTTP/1.x " */
+    p = strchr(p, ' ');
+    if (p == NULL) {
+        return false;
+    }
+    p++;
+    int status = 0;
+    if (sscanf(p, "%d", &status) != 1) {
+        return false;
+    }
+    if (status < 200 || status > 299) {
+        fprintf(stderr, "[HTTP] Non-2xx status: %d\n", status);
+        return false;
+    }
+    return true;
+}
+
 static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
     if (body_out == NULL || body_out_len == 0) {
         return false;
@@ -385,6 +408,10 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
 
     char response[HOME_HTTP_BUF_SIZE];
     if (!http_send_request(request, response, sizeof(response))) {
+        return false;
+    }
+
+    if (!http_response_ok(response)) {
         return false;
     }
 
@@ -422,6 +449,10 @@ static bool http_post_auth_token(char * body_out, size_t body_out_len) {
 
     char response[HOME_HTTP_BUF_SIZE];
     if (!http_send_request(request, response, sizeof(response))) {
+        return false;
+    }
+
+    if (!http_response_ok(response)) {
         return false;
     }
 
