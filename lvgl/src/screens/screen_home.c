@@ -195,7 +195,7 @@ static void render_empty_state(const char * text) {
 }
 
 static void render_task_cards(void) {
-    if (HOME_API_USER_ID <= 0) {
+    if (g_app_state.user_id <= 0) {
         render_empty_state("Not paired");
         return;
     }
@@ -248,7 +248,7 @@ static void render_task_cards(void) {
  * API fetch
  * ----------------------------------------------------------------------- */
 static void fetch_due_today_now(void) {
-    if (HOME_API_USER_ID <= 0) {
+    if (g_app_state.user_id <= 0) {
         char token[128] = {0};
         bool got_token = home_api_fetch_auth_token(token, sizeof(token));
 
