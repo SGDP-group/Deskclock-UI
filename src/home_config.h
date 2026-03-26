@@ -2,11 +2,11 @@
 #define HOME_CONFIG_H
 
 /* Central home screen API config. */
-#define HOME_API_HOST "192.168.8.166"
+#define HOME_API_HOST "16.16.217.234"
 #define HOME_API_PORT 8080
 #define HOME_API_USER_ID 2
 
-#define HOME_GAZE_STREAM_HOST HOME_API_HOST
+#define HOME_GAZE_STREAM_HOST "192.168.8.166"
 #define HOME_GAZE_STREAM_PORT 8003
 #define HOME_GAZE_STREAM_FPS 5
 #define HOME_CAMERA_PREVIEW_FPS 5
@@ -26,5 +26,11 @@
 #define HOME_FOCUS_CHUNK_MINUTES 30
 #define HOME_BREAK_MINUTES 5
 #define HOME_BONUS_FOCUS_MINUTES 5
+
+/*
+ * Countdown speed multiplier for local testing.
+ * 1 = real-time countdown, 60 = countdown runs 60x faster (1 real second = 1 in-app minute).
+ */
+#define HOME_COUNTDOWN_SPEED_MULTIPLIER 60U
 
 #endif /* HOME_CONFIG_H */
