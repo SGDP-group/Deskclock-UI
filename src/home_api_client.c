@@ -18,6 +18,10 @@
 
 #define HOME_HTTP_BUF_SIZE 16384
 
+#define HOME_SUBTASK_STATUS_PENDING     1
+#define HOME_SUBTASK_STATUS_INPROGRESS  2
+#define HOME_SUBTASK_STATUS_COMPLETED   3
+
 static bool g_winsock_ready = false;
 
 static void build_due_today_path(char * path, size_t path_len) {
@@ -392,6 +396,142 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
     return true;
 }
 
+static bool response_is_success(const char * response) {
+    if (response == NULL) {
+        return false;
+    }
+
+    return (strncmp(response, "HTTP/1.1 2", 10) == 0) ||
+           (strncmp(response, "HTTP/1.0 2", 10) == 0);
+}
+
+static bool http_patch_subtask_status(int subtask_id, int status_id, bool completed) {
+    if (subtask_id <= 0 || status_id <= 0) {
+        return false;
+    }
+
+    char path[96];
+    snprintf(path, sizeof(path), "/api/subtasks/%d", subtask_id);
+
+    char body[96];
+    int body_len = snprintf(body,
+                            sizeof(body),
+                            "{\"statusId\":%d,\"completed\":%s}",
+                            status_id,
+                            completed ? "true" : "false");
+    if (body_len <= 0 || (size_t)body_len >= sizeof(body)) {
+        return false;
+    }
+
+    char request[768];
+    int request_len = snprintf(request,
+                               sizeof(request),
+                               "PATCH %s HTTP/1.1\r\n"
+                               "Host: %s\r\n"
+                               "Connection: close\r\n"
+                               "Content-Type: application/json\r\n"
+                               "Accept: application/json\r\n"
+                               "Content-Length: %d\r\n\r\n"
+                               "%s",
+                               path,
+                               HOME_API_HOST,
+                               body_len,
+                               body);
+    if (request_len <= 0 || (size_t)request_len >= sizeof(request)) {
+        return false;
+    }
+
+    char response[HOME_HTTP_BUF_SIZE];
+    size_t used = 0;
+    response[0] = '\0';
+
+#ifdef _WIN32
+    if (!g_winsock_ready) {
+        WSADATA wsa;
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) {
+            return false;
+        }
+        g_winsock_ready = true;
+    }
+
+    struct addrinfo hints;
+    struct addrinfo * res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port[8];
+    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
+    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
+        return false;
+    }
+
+    SOCKET sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock == INVALID_SOCKET) {
+        freeaddrinfo(res);
+        return false;
+    }
+
+    if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
+        closesocket(sock);
+        freeaddrinfo(res);
+        return false;
+    }
+    freeaddrinfo(res);
+
+    send(sock, request, request_len, 0);
+
+    while (used + 1 < sizeof(response)) {
+        int n = recv(sock, response + used, (int)(sizeof(response) - used - 1), 0);
+        if (n <= 0) {
+            break;
+        }
+        used += (size_t)n;
+    }
+    response[used] = '\0';
+    closesocket(sock);
+#else
+    struct addrinfo hints;
+    struct addrinfo * res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port[8];
+    snprintf(port, sizeof(port), "%d", HOME_API_PORT);
+    if (getaddrinfo(HOME_API_HOST, port, &hints, &res) != 0 || res == NULL) {
+        return false;
+    }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        freeaddrinfo(res);
+        return false;
+    }
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+        close(sock);
+        freeaddrinfo(res);
+        return false;
+    }
+    freeaddrinfo(res);
+
+    send(sock, request, request_len, 0);
+
+    while (used + 1 < sizeof(response)) {
+        ssize_t n = recv(sock, response + used, sizeof(response) - used - 1, 0);
+        if (n <= 0) {
+            break;
+        }
+        used += (size_t)n;
+    }
+    response[used] = '\0';
+    close(sock);
+#endif
+
+    return response_is_success(response);
+}
+
 bool home_api_fetch_due_today(HomeApiTask * tasks, uint8_t * out_count, uint8_t cap) {
     if (tasks == NULL || out_count == NULL || cap == 0) {
         return false;
@@ -407,4 +547,16 @@ bool home_api_fetch_due_today(HomeApiTask * tasks, uint8_t * out_count, uint8_t 
 
     *out_count = parse_due_today_json(body, tasks, cap);
     return true;
+}
+
+bool home_api_mark_subtask_in_progress(int subtask_id) {
+    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_INPROGRESS, false);
+}
+
+bool home_api_mark_subtask_completed(int subtask_id) {
+    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_COMPLETED, true);
+}
+
+bool home_api_mark_subtask_pending(int subtask_id) {
+    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_PENDING, false);
 }
