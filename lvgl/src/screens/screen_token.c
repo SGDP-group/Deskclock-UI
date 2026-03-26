@@ -49,38 +49,38 @@ static void fetch_and_render_token(lv_obj_t * qr_container) {
         lv_label_set_text(g_token_lbl, "");
     }
 
-#if HOME_API_USER_ID <= 0
-    /* Pairing mode: always request a fresh token from authToken/generate. */
-    char token[128] = {0};
-    bool ok = home_api_fetch_auth_token(token, sizeof(token));
-    if (ok && token[0] != '\0') {
-        app_state_set_auth_token(token);
-        if (!render_qr(qr_container, token)) {
-            lv_label_set_text(g_status_lbl, "QR render failed");
-        } else {
-            lv_label_set_text(g_status_lbl, "");
-            if (g_token_lbl != NULL) {
-                lv_label_set_text(g_token_lbl, token);
+    /* Pairing mode: request a fresh token when no user is paired. */
+    if (g_app_state.user_id <= 0) {
+        char token[128] = {0};
+        bool ok = home_api_fetch_auth_token(token, sizeof(token));
+        if (ok && token[0] != '\0') {
+            app_state_set_auth_token(token);
+            if (!render_qr(qr_container, token)) {
+                lv_label_set_text(g_status_lbl, "QR render failed");
+            } else {
+                lv_label_set_text(g_status_lbl, "");
+                if (g_token_lbl != NULL) {
+                    lv_label_set_text(g_token_lbl, token);
+                }
             }
+        } else {
+            lv_label_set_text(g_status_lbl, "Token unavailable");
         }
     } else {
-        lv_label_set_text(g_status_lbl, "Token unavailable");
-    }
-#else
-    /* Non-pairing mode: use an already provided token if available. */
-    if (g_app_state.auth_token[0] != '\0') {
-        if (!render_qr(qr_container, g_app_state.auth_token)) {
-            lv_label_set_text(g_status_lbl, "QR render failed");
-        } else {
-            lv_label_set_text(g_status_lbl, "");
-            if (g_token_lbl != NULL) {
-                lv_label_set_text(g_token_lbl, g_app_state.auth_token);
+        /* Non-pairing mode: use an already provided token if available. */
+        if (g_app_state.auth_token[0] != '\0') {
+            if (!render_qr(qr_container, g_app_state.auth_token)) {
+                lv_label_set_text(g_status_lbl, "QR render failed");
+            } else {
+                lv_label_set_text(g_status_lbl, "");
+                if (g_token_lbl != NULL) {
+                    lv_label_set_text(g_token_lbl, g_app_state.auth_token);
+                }
             }
+        } else {
+            lv_label_set_text(g_status_lbl, "Token unavailable");
         }
-    } else {
-        lv_label_set_text(g_status_lbl, "Token unavailable");
     }
-#endif
 }
 
 lv_obj_t * screen_token_create(void) {
@@ -101,7 +101,7 @@ lv_obj_t * screen_token_create(void) {
     lv_obj_set_style_pad_gap(container, 18, LV_PART_MAIN);
 
     lv_obj_t * title = lv_label_create(container);
-    lv_label_set_text(title, "Scan QR to pair");
+    lv_label_set_text(title, "Scan to pair.");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
 
