@@ -1,5 +1,6 @@
 #include "home_api_client.h"
 #include "home_config.h"
+#include "lvgl/src/data/app_state.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -57,9 +58,10 @@ static void build_due_today_path(char * path, size_t path_len) {
     tz_offset_minutes = (long)(difftime(local_epoch, gmt_as_local_epoch) / 60.0);
 #endif
 
+    int active_user_id = (g_app_state.user_id > 0) ? g_app_state.user_id : HOME_API_USER_ID;
     snprintf(path, path_len,
              "/api/subtasks/due-today?userId=%d&deviceDate=%s&deviceTime=%s&deviceEpoch=%lld&tzOffsetMinutes=%ld",
-             HOME_API_USER_ID,
+             active_user_id,
              date_buf,
              time_buf,
              (long long)now,
@@ -486,7 +488,7 @@ static bool http_post_auth_token(char * body_out, size_t body_out_len) {
 
     char request[384];
     snprintf(request, sizeof(request),
-             "POST /authToken/generate HTTP/1.1\r\n"
+             "POST /api/authToken/generate HTTP/1.1\r\n"
              "Host: %s:%d\r\n"
              "Content-Type: application/json\r\n"
              "Content-Length: %zu\r\n"
