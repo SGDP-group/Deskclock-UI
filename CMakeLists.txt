@@ -24,6 +24,7 @@ add_compile_definitions(
     LV_FONT_MONTSERRAT_48=1
 
     LV_USE_LOG=1
+    LV_USE_QRCODE=1
 
     LV_USE_ASSERT_NULL=1
     LV_USE_ASSERT_MALLOC=1

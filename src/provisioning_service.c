@@ -133,6 +133,8 @@ static void make_softap_ssid(void) {
 static bool start_softap(void) {
     char cmd[256];
 
+    (void)run_command("nmcli radio wifi on > /dev/null 2>&1");
+    (void)run_command("nmcli device disconnect wlan0 > /dev/null 2>&1");
     (void)run_command("nmcli connection delete " SOFTAP_PROFILE_NAME " > /dev/null 2>&1");
 
     snprintf(cmd,
@@ -146,7 +148,7 @@ static bool start_softap(void) {
 
     snprintf(cmd,
              sizeof(cmd),
-             "nmcli connection modify %s 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 wifi-sec.key-mgmt none > /dev/null 2>&1",
+             "nmcli connection modify %s 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 > /dev/null 2>&1",
              SOFTAP_PROFILE_NAME);
     if (run_command(cmd) != 0) {
         return false;
