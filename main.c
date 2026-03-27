@@ -189,15 +189,23 @@ int main(int argc, char *argv[]) {
 
     (void)disp;
 
+    bool showing_provisioning_screen = false;
+
     if (!provisioned) {
         const char * softap_ssid = provisioning_active ? provisioning_service_get_softap_ssid() : "PiSetup-XXXX";
         ui_show_provisioning_screen(softap_ssid);
+        showing_provisioning_screen = true;
     }
     else {
         ui_init();
     }
 
     while (1) {
+        if (showing_provisioning_screen && device_config_is_provisioned()) {
+            ui_init();
+            showing_provisioning_screen = false;
+        }
+
         lv_timer_handler();
 #ifdef _WIN32
         SDL_Delay(5);

@@ -13,6 +13,7 @@
 #include "lvgl/src/libs/qrcode/lv_qrcode.h"
 
 #include <stdio.h>
+#include <string.h>
 
 static lv_obj_t * g_active_screen = NULL;
 
@@ -54,7 +55,7 @@ static lv_obj_t * create_provisioning_screen(const char * ssid) {
     lv_qrcode_set_dark_color(qrcode, lv_color_hex(0x0B1A20));
     lv_qrcode_set_light_color(qrcode, lv_color_hex(0xEAF8FF));
     lv_qrcode_update(qrcode, wifi_qr_payload, (uint32_t)strlen(wifi_qr_payload));
-    lv_obj_align(qrcode, LV_ALIGN_CENTER, 0, 22);
+    lv_obj_align(qrcode, LV_ALIGN_TOP_MID, 0, 170);
 
     lv_obj_t * line3 = lv_label_create(screen);
     lv_label_set_text(line3, "3. In the mobile app, open Setup Device and submit home Wi-Fi.");
@@ -63,7 +64,7 @@ static lv_obj_t * create_provisioning_screen(const char * ssid) {
     lv_obj_set_style_text_align(line3, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_color(line3, lv_color_hex(0xB9D9E8), 0);
     lv_obj_set_style_text_font(line3, &lv_font_montserrat_14, 0);
-    lv_obj_align(line3, LV_ALIGN_TOP_MID, 0, 290);
+    lv_obj_align(line3, LV_ALIGN_TOP_MID, 0, 365);
 
     lv_obj_t * footer = lv_label_create(screen);
     lv_label_set_text(footer, "Waiting for credentials...");

@@ -25,6 +25,8 @@
 static bool g_running = false;
 static bool g_stop_requested = false;
 static char g_softap_ssid[32] = "PiSetup-0000";
+static bool g_pending_apply = false;
+static DeviceConfig g_pending_config;
 
 #ifndef _WIN32
 static pthread_t g_server_thread;
@@ -276,17 +278,35 @@ static void handle_post_provision(int fd, const char * request) {
         return;
     }
 
+    g_pending_config = config;
+    g_pending_apply = true;
+    send_http_response(fd, 200, "OK", "{\"status\":\"accepted\"}");
+}
+
+static void apply_pending_provisioning(void) {
+    if (!g_pending_apply) {
+        return;
+    }
+
+    DeviceConfig config = g_pending_config;
+    g_pending_apply = false;
+
+    log_provisioning("apply_pending_provisioning started");
+
     stop_softap();
     if (!connect_station_wifi(config.wifi_ssid, config.wifi_password)) {
+        log_provisioning("apply_pending_provisioning failed to connect station wifi");
         (void)start_softap();
-        send_http_response(fd, 500, "Internal Server Error", "{\"status\":\"error\",\"message\":\"wifi connect failed\"}");
         return;
     }
 
     config.provisioned = true;
-    (void)device_config_save(&config);
+    if (!device_config_save(&config)) {
+        log_provisioning("apply_pending_provisioning failed to save provisioned config");
+        return;
+    }
 
-    send_http_response(fd, 200, "OK", "{\"status\":\"success\"}");
+    log_provisioning("apply_pending_provisioning success");
     g_stop_requested = true;
 }
 
@@ -337,6 +357,8 @@ static void * server_thread_main(void * arg) {
     }
 
     while (!g_stop_requested) {
+        apply_pending_provisioning();
+
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
         int client_fd = accept(server_fd, (struct sockaddr *)&client_addr, &client_len);
