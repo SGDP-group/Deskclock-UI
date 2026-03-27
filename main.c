@@ -171,6 +171,7 @@ int main(int argc, char *argv[]) {
 
     lv_log_register_print_cb(lv_print_cb);
     device_config_load();
+    bool provisioned = device_config_is_provisioned();
     bool provisioning_active = provisioning_service_start_if_needed();
     lv_init();
 
@@ -188,9 +189,11 @@ int main(int argc, char *argv[]) {
 
     (void)disp;
 
-    if (provisioning_active) {
-        ui_show_provisioning_screen(provisioning_service_get_softap_ssid());
-    } else {
+    if (!provisioned) {
+        const char * softap_ssid = provisioning_active ? provisioning_service_get_softap_ssid() : "PiSetup-XXXX";
+        ui_show_provisioning_screen(softap_ssid);
+    }
+    else {
         ui_init();
     }
 
