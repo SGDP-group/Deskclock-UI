@@ -171,7 +171,7 @@ int main(int argc, char *argv[]) {
 
     lv_log_register_print_cb(lv_print_cb);
     device_config_load();
-    provisioning_service_start_if_needed();
+    bool provisioning_active = provisioning_service_start_if_needed();
     lv_init();
 
 #ifdef _WIN32
@@ -188,7 +188,11 @@ int main(int argc, char *argv[]) {
 
     (void)disp;
 
-    ui_init();
+    if (provisioning_active) {
+        ui_show_provisioning_screen(provisioning_service_get_softap_ssid());
+    } else {
+        ui_init();
+    }
 
     while (1) {
         lv_timer_handler();

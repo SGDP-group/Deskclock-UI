@@ -11,6 +11,9 @@
 
 void ui_init(void);
 
+/* Show setup instructions while SoftAP provisioning is active. */
+void ui_show_provisioning_screen(const char * ssid);
+
 /* Navigate from home to an active focus session screen. */
 void ui_navigate_focus_session(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id);
 
