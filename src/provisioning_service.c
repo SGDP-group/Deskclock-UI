@@ -20,6 +20,7 @@
 #define PROVISION_SERVER_PORT 8080
 #define PROVISION_SERVER_BUF_SIZE 4096
 #define SOFTAP_PROFILE_NAME "deskclock-softap"
+#define PROVISION_LOG_PATH "provisioning_log.txt"
 
 static bool g_running = false;
 static bool g_stop_requested = false;
@@ -114,12 +115,36 @@ static bool contains_unsafe_shell_chars(const char * value) {
     return false;
 }
 
+static void log_provisioning(const char * message) {
+    FILE * f = fopen(PROVISION_LOG_PATH, "a");
+    if (f == NULL) {
+        return;
+    }
+
+    time_t now = time(NULL);
+    struct tm tm_info;
+    localtime_r(&now, &tm_info);
+
+    char time_buf[32] = {0};
+    strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_info);
+
+    fprintf(f, "[%s] %s\n", time_buf, (message != NULL) ? message : "(null)");
+    fclose(f);
+}
+
 static int run_command(const char * cmd) {
     if (cmd == NULL || cmd[0] == '\0') {
+        log_provisioning("run_command called with empty command");
         return -1;
     }
 
-    return system(cmd);
+    int rc = system(cmd);
+
+    char line[512];
+    snprintf(line, sizeof(line), "cmd rc=%d :: %s", rc, cmd);
+    log_provisioning(line);
+
+    return rc;
 }
 
 static void make_softap_ssid(void) {
@@ -132,35 +157,44 @@ static void make_softap_ssid(void) {
 #ifndef _WIN32
 static bool start_softap(void) {
     char cmd[256];
+    log_provisioning("start_softap begin");
 
-    (void)run_command("nmcli radio wifi on > /dev/null 2>&1");
-    (void)run_command("nmcli device disconnect wlan0 > /dev/null 2>&1");
-    (void)run_command("nmcli connection delete " SOFTAP_PROFILE_NAME " > /dev/null 2>&1");
+    (void)run_command("nmcli radio wifi on");
+    (void)run_command("nmcli device disconnect wlan0");
+    (void)run_command("nmcli connection delete " SOFTAP_PROFILE_NAME);
 
     snprintf(cmd,
              sizeof(cmd),
-             "nmcli connection add type wifi ifname wlan0 con-name %s autoconnect no ssid %s > /dev/null 2>&1",
+             "nmcli connection add type wifi ifname wlan0 con-name %s autoconnect no ssid %s",
              SOFTAP_PROFILE_NAME,
              g_softap_ssid);
     if (run_command(cmd) != 0) {
+        log_provisioning("start_softap failed at connection add");
         return false;
     }
 
     snprintf(cmd,
              sizeof(cmd),
-             "nmcli connection modify %s 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24 > /dev/null 2>&1",
+             "nmcli connection modify %s 802-11-wireless.mode ap 802-11-wireless.band bg ipv4.method shared ipv4.addresses 192.168.4.1/24",
              SOFTAP_PROFILE_NAME);
     if (run_command(cmd) != 0) {
+        log_provisioning("start_softap failed at connection modify");
         return false;
     }
 
-    snprintf(cmd, sizeof(cmd), "nmcli connection up %s > /dev/null 2>&1", SOFTAP_PROFILE_NAME);
-    return run_command(cmd) == 0;
+    snprintf(cmd, sizeof(cmd), "nmcli connection up %s", SOFTAP_PROFILE_NAME);
+    if (run_command(cmd) != 0) {
+        log_provisioning("start_softap failed at connection up");
+        return false;
+    }
+
+    log_provisioning("start_softap success");
+    return true;
 }
 
 static void stop_softap(void) {
     char cmd[128];
-    snprintf(cmd, sizeof(cmd), "nmcli connection down %s > /dev/null 2>&1", SOFTAP_PROFILE_NAME);
+    snprintf(cmd, sizeof(cmd), "nmcli connection down %s", SOFTAP_PROFILE_NAME);
     (void)run_command(cmd);
 }
 
@@ -176,7 +210,7 @@ static bool connect_station_wifi(const char * ssid, const char * password) {
     char cmd[320];
     snprintf(cmd,
              sizeof(cmd),
-             "nmcli dev wifi connect \"%s\" password \"%s\" ifname wlan0 > /dev/null 2>&1",
+             "nmcli dev wifi connect \"%s\" password \"%s\" ifname wlan0",
              ssid,
              password);
 
@@ -322,6 +356,7 @@ static void * server_thread_main(void * arg) {
 
 bool provisioning_service_start_if_needed(void) {
     if (device_config_is_provisioned()) {
+        log_provisioning("provisioning skipped: device already provisioned");
         return false;
     }
 
@@ -329,11 +364,18 @@ bool provisioning_service_start_if_needed(void) {
     return false;
 #else
     if (g_running) {
+        log_provisioning("provisioning already running");
         return true;
     }
 
     make_softap_ssid();
+    {
+        char line[128];
+        snprintf(line, sizeof(line), "provisioning start requested, ssid=%s", g_softap_ssid);
+        log_provisioning(line);
+    }
     if (!start_softap()) {
+        log_provisioning("provisioning start failed: softap could not start");
         return false;
     }
 
@@ -343,10 +385,12 @@ bool provisioning_service_start_if_needed(void) {
     if (pthread_create(&g_server_thread, NULL, server_thread_main, NULL) != 0) {
         g_running = false;
         stop_softap();
+        log_provisioning("provisioning start failed: server thread create failed");
         return false;
     }
 
     pthread_detach(g_server_thread);
+    log_provisioning("provisioning service started");
     return true;
 #endif
 }
