@@ -28,7 +28,7 @@ void focus_image_stream_set_paused(bool paused);
 /* Stops frame stream and clears session metadata. */
 void focus_image_stream_stop(void);
 
-/* Sends one jpeg payload to the focus cloud API. */
+/* Sends one jpeg payload to the focus TCP ingest stream. */
 bool focus_image_stream_send_jpeg(const uint8_t * jpeg_data,
 								  size_t jpeg_len,
 								  uint32_t image_width,

@@ -9,9 +9,7 @@
 #define HOME_API_USER_ID (device_config_get_user_id())
 
 #define HOME_GAZE_STREAM_HOST "ec2-13-60-84-246.eu-north-1.compute.amazonaws.com"
-#define HOME_GAZE_STREAM_PORT 8002
-#define HOME_GAZE_STREAM_ANALYZE_PATH "/api/v1/focus/analyze"
-#define HOME_GAZE_STREAM_SESSION_START_PATH "/api/v1/focus/session/start"
+#define HOME_GAZE_STREAM_PORT 8003
 #define HOME_GAZE_STREAM_FPS 5
 #define HOME_CAMERA_PREVIEW_FPS 5
 #define HOME_CAMERA_DEVICE "/dev/video0"
