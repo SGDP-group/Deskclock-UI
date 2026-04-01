@@ -1,10 +1,12 @@
 #ifndef HOME_CONFIG_H
 #define HOME_CONFIG_H
 
+#include "device_config.h"
+
 /* Central home screen API config. */
 #define HOME_API_HOST "16.16.217.234"
 #define HOME_API_PORT 8080
-#define HOME_API_USER_ID 2
+#define HOME_API_USER_ID (device_config_get_user_id())
 
 #define HOME_GAZE_STREAM_HOST "192.168.8.166"
 #define HOME_GAZE_STREAM_PORT 8003

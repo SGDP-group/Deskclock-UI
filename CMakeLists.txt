@@ -24,6 +24,7 @@ add_compile_definitions(
     LV_FONT_MONTSERRAT_48=1
 
     LV_USE_LOG=1
+    LV_USE_QRCODE=1
 
     LV_USE_ASSERT_NULL=1
     LV_USE_ASSERT_MALLOC=1
@@ -50,6 +51,8 @@ add_subdirectory(lvgl)
 # App-level sources live outside the vendored lvgl/ directory by design.
 # Keep this explicit so new files are never skipped by stale CMake globs.
 set(APP_SOURCES
+    src/device_config.c
+    src/provisioning_service.c
     src/home_api_client.c
     src/net_stream.c
     src/focus_image_stream.c
