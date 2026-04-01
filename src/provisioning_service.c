@@ -125,7 +125,22 @@ static void log_provisioning(const char * message) {
 
     time_t now = time(NULL);
     struct tm tm_info;
-    localtime_r(&now, &tm_info);
+    memset(&tm_info, 0, sizeof(tm_info));
+#ifdef _WIN32
+    if (localtime_s(&tm_info, &now) != 0) {
+        struct tm * fallback = localtime(&now);
+        if (fallback != NULL) {
+            tm_info = *fallback;
+        }
+    }
+#else
+    if (localtime_r(&now, &tm_info) == NULL) {
+        struct tm * fallback = localtime(&now);
+        if (fallback != NULL) {
+            tm_info = *fallback;
+        }
+    }
+#endif
 
     char time_buf[32] = {0};
     strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_info);
