@@ -93,6 +93,15 @@ extern const lv_font_t lv_font_montserrat_48 ;
 /* Footer */
 #define FOOTER_H           28
 
+/* Pull-to-refresh */
+#define PULL_REFRESH_TRIGGER_PX        70
+#define PULL_REFRESH_MAX_PULL_PX       120
+#define PULL_REFRESH_COOLDOWN_MS       800
+#define PULL_REFRESH_SPINNER_SIZE      34
+#define PULL_REFRESH_SPINNER_X         (HEADER_PAD_LEFT + 188)
+#define PULL_REFRESH_SPINNER_BASE_Y    (HEADER_PAD_TOP - 16)
+#define PULL_REFRESH_SPINNER_MAX_Y     (HEADER_PAD_TOP + 46)
+
 /* -----------------------------------------------------------------------
  * Task card pool
  * ----------------------------------------------------------------------- */
@@ -110,12 +119,19 @@ static lv_obj_t * g_lbl_time     = NULL;
 static lv_obj_t * g_lbl_date     = NULL;
 static lv_obj_t * g_lbl_footer   = NULL;
 static lv_obj_t * g_task_list    = NULL;
+static lv_obj_t * g_pull_spinner = NULL;
 static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static lv_obj_t * g_lbl_empty_state = NULL;
 
 static bool g_fetch_inflight = false;
+static bool g_pull_tracking = false;
 static char g_last_time[16]  = {0};
 static char g_last_date[24]  = {0};
+static int32_t g_pull_start_y = 0;
+static int32_t g_pull_delta_y = 0;
+static uint32_t g_last_manual_refresh_tick = 0;
+static lv_timer_t * g_clock_timer = NULL;
+static lv_timer_t * g_refresh_timer = NULL;
 
 /* -----------------------------------------------------------------------
  * Utility helpers
@@ -228,6 +244,55 @@ static void render_task_cards(void) {
     }
 }
 
+static void refresh_footer_label(void) {
+    if (g_lbl_footer != NULL) {
+        lv_label_set_text(g_lbl_footer, g_app_state.status_message);
+    }
+}
+
+static void pull_refresh_hide_spinner(void) {
+    if (g_pull_spinner == NULL) return;
+
+    lv_obj_set_y(g_pull_spinner, PULL_REFRESH_SPINNER_BASE_Y);
+    lv_obj_set_style_opa(g_pull_spinner, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_opa(g_pull_spinner, LV_OPA_TRANSP, LV_PART_INDICATOR);
+    lv_obj_add_flag(g_pull_spinner, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void pull_refresh_update_spinner(int32_t drag_px) {
+    if (g_pull_spinner == NULL) return;
+    if (drag_px <= 0) {
+        pull_refresh_hide_spinner();
+        return;
+    }
+
+    int32_t clamped = drag_px;
+    if (clamped > PULL_REFRESH_MAX_PULL_PX) {
+        clamped = PULL_REFRESH_MAX_PULL_PX;
+    }
+
+    int32_t travel = PULL_REFRESH_SPINNER_MAX_Y - PULL_REFRESH_SPINNER_BASE_Y;
+    int32_t y = PULL_REFRESH_SPINNER_BASE_Y + (clamped * travel) / PULL_REFRESH_TRIGGER_PX;
+    if (y > PULL_REFRESH_SPINNER_MAX_Y) {
+        y = PULL_REFRESH_SPINNER_MAX_Y;
+    }
+
+    uint8_t opa = (uint8_t)((clamped * LV_OPA_COVER) / PULL_REFRESH_TRIGGER_PX);
+    if (opa > LV_OPA_COVER) {
+        opa = LV_OPA_COVER;
+    }
+
+    lv_color_t indicator_color = (clamped >= PULL_REFRESH_TRIGGER_PX)
+                                     ? lv_color_hex(CLR_ACCENT_STRIP)
+                                     : lv_color_hex(CLR_TEXT_SECONDARY);
+
+    lv_obj_set_y(g_pull_spinner, y);
+    lv_obj_set_style_opa(g_pull_spinner, opa, LV_PART_MAIN);
+    lv_obj_set_style_opa(g_pull_spinner, opa, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(g_pull_spinner, indicator_color, LV_PART_INDICATOR);
+    lv_obj_clear_flag(g_pull_spinner, LV_OBJ_FLAG_HIDDEN);
+}
+
 /* -----------------------------------------------------------------------
  * API fetch
  * ----------------------------------------------------------------------- */
@@ -265,18 +330,93 @@ static void fetch_due_today_now(void) {
     }
 }
 
-static void start_due_today_fetch(void) {
-    if (g_fetch_inflight) return;
+static void start_due_today_fetch(bool manual_trigger) {
+    if (g_fetch_inflight) {
+        if (manual_trigger) {
+            app_state_set_status("Already updating...");
+            refresh_footer_label();
+            pull_refresh_hide_spinner();
+        }
+        return;
+    }
+
+    if (manual_trigger) {
+        app_state_set_status("Refreshing...");
+        refresh_footer_label();
+        pull_refresh_update_spinner(PULL_REFRESH_TRIGGER_PX);
+        lv_refr_now(NULL);
+    }
+
     g_fetch_inflight = true;
     app_state_set_tasks_loading(true);
     render_task_cards();
     fetch_due_today_now();
     g_fetch_inflight = false;
+
+    if (manual_trigger) {
+        if (strcmp(g_app_state.status_message, "Refreshing...") == 0) {
+            app_state_set_status("Ready");
+            refresh_footer_label();
+        }
+
+        if (g_refresh_timer != NULL) {
+            lv_timer_reset(g_refresh_timer);
+            lv_timer_resume(g_refresh_timer);
+        }
+
+        pull_refresh_hide_spinner();
+    }
 }
 
 static void refresh_timer_cb(lv_timer_t * timer) {
     (void)timer;
-    start_due_today_fetch();
+    start_due_today_fetch(false);
+}
+
+static void time_pull_refresh_event_cb(lv_event_t * e) {
+    lv_event_code_t code = lv_event_get_code(e);
+    lv_indev_t * indev = lv_event_get_indev(e);
+    lv_point_t point = {0, 0};
+
+    if (indev != NULL) {
+        lv_indev_get_point(indev, &point);
+    }
+
+    if (code == LV_EVENT_PRESSED) {
+        g_pull_tracking = true;
+        g_pull_start_y = point.y;
+        g_pull_delta_y = 0;
+        pull_refresh_hide_spinner();
+        return;
+    }
+
+    if (code == LV_EVENT_PRESSING) {
+        if (!g_pull_tracking) return;
+
+        g_pull_delta_y = point.y - g_pull_start_y;
+        if (g_pull_delta_y < 0) {
+            g_pull_delta_y = 0;
+        }
+        pull_refresh_update_spinner(g_pull_delta_y);
+        return;
+    }
+
+    if (code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        if (!g_pull_tracking) return;
+
+        g_pull_tracking = false;
+        bool threshold_hit = g_pull_delta_y >= PULL_REFRESH_TRIGGER_PX;
+        bool cooldown_done = lv_tick_elaps(g_last_manual_refresh_tick) >= PULL_REFRESH_COOLDOWN_MS;
+
+        if (threshold_hit && cooldown_done) {
+            g_last_manual_refresh_tick = lv_tick_get();
+            start_due_today_fetch(true);
+        } else {
+            pull_refresh_hide_spinner();
+        }
+
+        g_pull_delta_y = 0;
+    }
 }
 
 static void task_list_scroll_cb(lv_event_t * e) {
@@ -498,8 +638,12 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_remove_style_all(time_col);
     lv_obj_set_size(time_col, 440, HEADER_H - HEADER_PAD_TOP);
     lv_obj_set_pos(time_col, HEADER_PAD_LEFT, HEADER_PAD_TOP + 25);
+    lv_obj_add_flag(time_col, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(time_col, LV_OBJ_FLAG_PRESS_LOCK);
 
     g_lbl_time = lv_label_create(time_col);
+    lv_obj_add_flag(g_lbl_time, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(g_lbl_time, LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_set_width(g_lbl_time, 440); /* Keep large clock font visible without overrun on 800px screen */
     lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(CLR_TEXT_CLOCK), LV_PART_MAIN);
@@ -507,10 +651,37 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_align(g_lbl_time, LV_ALIGN_TOP_LEFT, 0, 0);
 
     g_lbl_date = lv_label_create(time_col);
+    lv_obj_add_flag(g_lbl_date, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(g_lbl_date, LV_OBJ_FLAG_PRESS_LOCK);
     lv_obj_set_style_text_font(g_lbl_date, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_date, lv_color_hex(CLR_TEXT_DATE), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(g_lbl_date, 7, LV_PART_MAIN);
     lv_obj_align_to(g_lbl_date, g_lbl_time, LV_ALIGN_OUT_BOTTOM_LEFT, 2, 8);
+
+    g_pull_spinner = lv_spinner_create(screen);
+    lv_obj_set_size(g_pull_spinner, PULL_REFRESH_SPINNER_SIZE, PULL_REFRESH_SPINNER_SIZE);
+    lv_spinner_set_anim_params(g_pull_spinner, 700, 90);
+    lv_obj_set_pos(g_pull_spinner, PULL_REFRESH_SPINNER_X, PULL_REFRESH_SPINNER_BASE_Y);
+    lv_obj_set_style_arc_width(g_pull_spinner, 4, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(g_pull_spinner, 4, LV_PART_MAIN);
+    lv_obj_set_style_arc_color(g_pull_spinner, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(g_pull_spinner, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_pull_spinner, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_clear_flag(g_pull_spinner, LV_OBJ_FLAG_CLICKABLE);
+    pull_refresh_hide_spinner();
+
+    lv_obj_add_event_cb(time_col,  time_pull_refresh_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(time_col,  time_pull_refresh_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(time_col,  time_pull_refresh_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(time_col,  time_pull_refresh_event_cb, LV_EVENT_PRESS_LOST, NULL);
+    lv_obj_add_event_cb(g_lbl_time, time_pull_refresh_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(g_lbl_time, time_pull_refresh_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(g_lbl_time, time_pull_refresh_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(g_lbl_time, time_pull_refresh_event_cb, LV_EVENT_PRESS_LOST, NULL);
+    lv_obj_add_event_cb(g_lbl_date, time_pull_refresh_event_cb, LV_EVENT_PRESSED, NULL);
+    lv_obj_add_event_cb(g_lbl_date, time_pull_refresh_event_cb, LV_EVENT_PRESSING, NULL);
+    lv_obj_add_event_cb(g_lbl_date, time_pull_refresh_event_cb, LV_EVENT_RELEASED, NULL);
+    lv_obj_add_event_cb(g_lbl_date, time_pull_refresh_event_cb, LV_EVENT_PRESS_LOST, NULL);
 
     /* ── Quick Focus button (top-right) ── */
     lv_obj_t * quick_btn = lv_btn_create(screen);
@@ -586,15 +757,28 @@ lv_obj_t * screen_home_create(void) {
     /* Force first label render for newly created Home screen instances. */
     memset(g_last_time, 0, sizeof(g_last_time));
     memset(g_last_date, 0, sizeof(g_last_date));
+    g_pull_tracking = false;
+    g_pull_start_y = 0;
+    g_pull_delta_y = 0;
+    g_last_manual_refresh_tick = lv_tick_get() - PULL_REFRESH_COOLDOWN_MS;
 
     /* ── Kick off timers and initial fetch ── */
     update_clock_labels();
     render_task_cards();
 
-    lv_timer_create(clock_timer_cb, 1000, NULL);
-    lv_timer_create(refresh_timer_cb, HOME_API_REFRESH_MS, NULL);
+    if (g_clock_timer != NULL) {
+        lv_timer_delete(g_clock_timer);
+        g_clock_timer = NULL;
+    }
+    if (g_refresh_timer != NULL) {
+        lv_timer_delete(g_refresh_timer);
+        g_refresh_timer = NULL;
+    }
 
-    start_due_today_fetch();
+    g_clock_timer = lv_timer_create(clock_timer_cb, 1000, NULL);
+    g_refresh_timer = lv_timer_create(refresh_timer_cb, HOME_API_REFRESH_MS, NULL);
+
+    start_due_today_fetch(false);
 
     return screen;
 }
