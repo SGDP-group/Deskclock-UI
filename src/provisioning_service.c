@@ -28,6 +28,8 @@ static char g_softap_ssid[32] = "PiSetup-0000";
 static bool g_pending_apply = false;
 static DeviceConfig g_pending_config;
 
+void provisioning_service_stop(void);
+
 #ifndef _WIN32
 static pthread_t g_server_thread;
 #endif
@@ -430,6 +432,13 @@ bool provisioning_service_start_if_needed(void) {
     log_provisioning("provisioning service started");
     return true;
 #endif
+}
+
+bool provisioning_service_restart_for_reprovision(void) {
+    provisioning_service_stop();
+    g_pending_apply = false;
+
+    return provisioning_service_start_if_needed();
 }
 
 void provisioning_service_stop(void) {

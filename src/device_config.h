@@ -18,5 +18,7 @@ void device_config_set_defaults(void);
 const DeviceConfig * device_config_get(void);
 int device_config_get_user_id(void);
 bool device_config_is_provisioned(void);
+bool device_config_has_wifi_credentials(void);
+bool device_config_factory_reset(void);
 
 #endif /* DEVICE_CONFIG_H */
