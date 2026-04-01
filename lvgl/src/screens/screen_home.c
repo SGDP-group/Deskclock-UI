@@ -536,6 +536,7 @@ static void create_single_task_card(lv_obj_t * parent, uint8_t idx) {
     /* Title — large, bold, truncated */
     lv_obj_t * title = lv_label_create(body);
     lv_obj_set_width(title, lv_pct(100));
+    lv_obj_set_height(title, lv_font_get_line_height(&lv_font_montserrat_48));
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
     lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
