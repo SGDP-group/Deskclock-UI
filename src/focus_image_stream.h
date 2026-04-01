@@ -28,8 +28,13 @@ void focus_image_stream_set_paused(bool paused);
 /* Stops frame stream and clears session metadata. */
 void focus_image_stream_stop(void);
 
-/* Encodes framing header and pushes one jpeg payload over socket queue. */
-bool focus_image_stream_send_jpeg(const uint8_t * jpeg_data, size_t jpeg_len, uint64_t timestamp_ms, uint32_t seq);
+/* Sends one jpeg payload to the focus cloud API. */
+bool focus_image_stream_send_jpeg(const uint8_t * jpeg_data,
+								  size_t jpeg_len,
+								  uint32_t image_width,
+								  uint32_t image_height,
+								  uint64_t timestamp_ms,
+								  uint32_t seq);
 
 /* Gets stream transport diagnostics for runtime debugging. */
 FocusImageStreamStats focus_image_stream_get_stats(void);

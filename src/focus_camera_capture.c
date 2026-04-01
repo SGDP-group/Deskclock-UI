@@ -572,6 +572,8 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
             if (stream_enabled) {
                 sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
                                                     (size_t)buf.bytesused,
+                                                    s_capture.width,
+                                                    s_capture.height,
                                                     ts_ms,
                                                     s_capture.seq++);
             } else {
@@ -595,7 +597,12 @@ static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_c
                                         jpeg_scratch,
                                         jpeg_scratch_cap,
                                         &jpeg_len)) {
-                    sent = focus_image_stream_send_jpeg(jpeg_scratch, jpeg_len, ts_ms, s_capture.seq++);
+                    sent = focus_image_stream_send_jpeg(jpeg_scratch,
+                                                        jpeg_len,
+                                                        s_capture.width,
+                                                        s_capture.height,
+                                                        ts_ms,
+                                                        s_capture.seq++);
                 } else {
                     s_capture.capture_failures++;
                     set_capture_error("YUYV->JPEG encode failed");
