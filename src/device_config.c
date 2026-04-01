@@ -259,3 +259,17 @@ bool device_config_is_provisioned(void) {
     const DeviceConfig * config = device_config_get();
     return config->provisioned;
 }
+
+bool device_config_has_wifi_credentials(void) {
+    const DeviceConfig * config = device_config_get();
+    return config->wifi_ssid[0] != '\0' && config->wifi_password[0] != '\0';
+}
+
+bool device_config_factory_reset(void) {
+    DeviceConfig reset_config;
+    memset(&reset_config, 0, sizeof(reset_config));
+    reset_config.provisioned = false;
+    reset_config.user_id = 0;
+
+    return device_config_save(&reset_config);
+}

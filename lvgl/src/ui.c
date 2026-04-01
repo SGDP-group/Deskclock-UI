@@ -16,6 +16,7 @@
 #include <string.h>
 
 static lv_obj_t * g_active_screen = NULL;
+static bool g_is_provisioning_screen = false;
 
 static void load_screen(lv_obj_t * screen) {
     if (screen == NULL) return;
@@ -78,6 +79,7 @@ static lv_obj_t * create_provisioning_screen(const char * ssid) {
 void ui_init(void) {
     /* Initialize global styles first (like importing globals.css) */
     theme_init();
+    g_is_provisioning_screen = false;
 
     /* Create the home screen and load it */
     /* lv_scr_load() = mounting your root component into the DOM   */
@@ -86,17 +88,25 @@ void ui_init(void) {
 
 void ui_show_provisioning_screen(const char * ssid) {
     theme_init();
+    g_is_provisioning_screen = true;
     load_screen(create_provisioning_screen(ssid));
 }
 
+bool ui_is_showing_provisioning_screen(void) {
+    return g_is_provisioning_screen;
+}
+
 void ui_navigate_focus_session(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id) {
+    g_is_provisioning_screen = false;
     load_screen(screen_focus_session_create(title, duration_seconds, is_quick_session, task_id));
 }
 
 void ui_navigate_camera_preview(const char * title, uint32_t duration_seconds, bool is_quick_session, int task_id) {
+    g_is_provisioning_screen = false;
     load_screen(screen_camera_preview_create(title, duration_seconds, is_quick_session, task_id));
 }
 
 void ui_navigate_home(void) {
+    g_is_provisioning_screen = false;
     load_screen(screen_home_create());
 }

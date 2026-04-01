@@ -5,8 +5,12 @@
 #include "../ui.h"
 #include "src/home_api_client.h"
 #include "src/home_config.h"
+#include "src/device_config.h"
+#include "src/provisioning_service.h"
+#include "src/doormount_service.h"
 
 #include <ctype.h>
+#include <stdio.h>
 #include <string.h>
 #include <time.h>
 
@@ -62,9 +66,19 @@ extern const lv_font_t lv_font_montserrat_48 ;
 #define DATE_FONT_SIZE     32   /* mapped to lv_font_montserrat_48 */
 
 /* Quick Focus button */
-#define QF_BTN_W           300
+#define QF_BTN_W           236
 #define QF_BTN_H           120
 #define QF_BTN_RADIUS      26
+
+/* Settings button (between clock + Quick Focus) */
+#define SETTINGS_BTN_SIZE  74
+#define HEADER_CTRL_GAP    16
+
+/* Settings/Doormount popup layout */
+#define SETTINGS_POPUP_W   620
+#define SETTINGS_POPUP_H   360
+#define DOORMOUNT_POPUP_W  700
+#define DOORMOUNT_POPUP_H  400
 
 /* Task carousel area */
 #define TASK_AREA_PAD_X    24
@@ -120,8 +134,14 @@ static lv_obj_t * g_lbl_date     = NULL;
 static lv_obj_t * g_lbl_footer   = NULL;
 static lv_obj_t * g_task_list    = NULL;
 static lv_obj_t * g_pull_spinner = NULL;
+static lv_obj_t * g_settings_overlay = NULL;
+static lv_obj_t * g_reset_overlay = NULL;
+static lv_obj_t * g_doormount_overlay = NULL;
+static lv_obj_t * g_doormount_status = NULL;
+static lv_obj_t * g_doormount_list = NULL;
 static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static lv_obj_t * g_lbl_empty_state = NULL;
+static DoormountNetworkList g_doormount_networks;
 
 static bool g_fetch_inflight = false;
 static bool g_pull_tracking = false;
@@ -464,6 +484,423 @@ static void quick_focus_event(lv_event_t * e) {
     }
 }
 
+static void close_overlay(lv_obj_t ** overlay, lv_obj_t ** status_label, lv_obj_t ** list) {
+    if (overlay != NULL && *overlay != NULL) {
+        lv_obj_del(*overlay);
+        *overlay = NULL;
+    }
+
+    if (status_label != NULL) {
+        *status_label = NULL;
+    }
+
+    if (list != NULL) {
+        *list = NULL;
+    }
+}
+
+static void settings_popup_close(void) {
+    close_overlay(&g_settings_overlay, NULL, NULL);
+}
+
+static void reset_popup_close(void) {
+    close_overlay(&g_reset_overlay, NULL, NULL);
+}
+
+static void doormount_popup_close(void) {
+    close_overlay(&g_doormount_overlay, &g_doormount_status, &g_doormount_list);
+    memset(&g_doormount_networks, 0, sizeof(g_doormount_networks));
+}
+
+static void doormount_scan_and_render(void);
+
+static void doormount_select_event(lv_event_t * e) {
+    if (g_doormount_status == NULL || g_doormount_list == NULL) {
+        return;
+    }
+
+    uint32_t idx = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
+    if (idx >= g_doormount_networks.count) {
+        return;
+    }
+
+    const char * ssid = g_doormount_networks.ssids[idx];
+
+    char status_line[128];
+    snprintf(status_line, sizeof(status_line), "Connecting to %s...", ssid);
+    lv_label_set_text(g_doormount_status, status_line);
+    lv_obj_add_state(g_doormount_list, LV_STATE_DISABLED);
+    lv_refr_now(NULL);
+
+    char error[160] = {0};
+    bool ok = doormount_service_setup_selected(ssid, error, sizeof(error));
+
+    lv_obj_clear_state(g_doormount_list, LV_STATE_DISABLED);
+
+    if (!ok) {
+        snprintf(status_line,
+                 sizeof(status_line),
+                 "Setup failed: %s",
+                 (error[0] != '\0') ? error : "Unknown error");
+        lv_label_set_text(g_doormount_status, status_line);
+        app_state_set_status("Doormount setup failed");
+        refresh_footer_label();
+        return;
+    }
+
+    lv_label_set_text(g_doormount_status, "Doormount setup complete. ESP32 is restarting.");
+    app_state_set_status("Doormount setup complete");
+    refresh_footer_label();
+}
+
+static void doormount_scan_and_render(void) {
+    if (g_doormount_status == NULL || g_doormount_list == NULL) {
+        return;
+    }
+
+    lv_obj_clean(g_doormount_list);
+    memset(&g_doormount_networks, 0, sizeof(g_doormount_networks));
+
+    if (!device_config_has_wifi_credentials() || device_config_get_user_id() <= 0) {
+        lv_label_set_text(g_doormount_status, "Saved home Wi-Fi/userId is missing.");
+        return;
+    }
+
+    lv_label_set_text(g_doormount_status, "Scanning DoorMount devices...");
+    lv_refr_now(NULL);
+
+    char error[128] = {0};
+    bool ok = doormount_service_scan(&g_doormount_networks, error, sizeof(error));
+    if (!ok) {
+        char status_line[160];
+        snprintf(status_line,
+                 sizeof(status_line),
+                 "Scan failed: %s",
+                 (error[0] != '\0') ? error : "No devices found");
+        lv_label_set_text(g_doormount_status, status_line);
+        return;
+    }
+
+    for (uint8_t i = 0; i < g_doormount_networks.count; i++) {
+        lv_obj_t * btn = lv_list_add_btn(g_doormount_list, LV_SYMBOL_WIFI, g_doormount_networks.ssids[i]);
+        lv_obj_add_event_cb(btn, doormount_select_event, LV_EVENT_CLICKED, (void *)(uintptr_t)i);
+    }
+
+    char status_line[96];
+    snprintf(status_line,
+             sizeof(status_line),
+             "Found %u device(s). Select one to set up.",
+             g_doormount_networks.count);
+    lv_label_set_text(g_doormount_status, status_line);
+}
+
+static void doormount_rescan_event(lv_event_t * e) {
+    (void)e;
+    doormount_scan_and_render();
+}
+
+static void doormount_close_event(lv_event_t * e) {
+    (void)e;
+    doormount_popup_close();
+}
+
+static void show_doormount_popup(void) {
+    doormount_popup_close();
+
+    lv_obj_t * screen = lv_scr_act();
+    if (screen == NULL) {
+        return;
+    }
+
+    g_doormount_overlay = lv_obj_create(screen);
+    lv_obj_remove_style_all(g_doormount_overlay);
+    lv_obj_set_size(g_doormount_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_pos(g_doormount_overlay, 0, 0);
+    lv_obj_set_style_bg_color(g_doormount_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_doormount_overlay, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(g_doormount_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * panel = lv_obj_create(g_doormount_overlay);
+    lv_obj_set_size(panel, DOORMOUNT_POPUP_W, DOORMOUNT_POPUP_H);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(CLR_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(panel, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(panel, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(panel, 18, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(panel, 0, LV_PART_MAIN);
+    lv_obj_set_style_clip_corner(panel, true, LV_PART_MAIN);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * title = lv_label_create(panel);
+    lv_label_set_text(title, "Setup Doormount");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
+
+    g_doormount_status = lv_label_create(panel);
+    lv_obj_set_width(g_doormount_status, DOORMOUNT_POPUP_W - 80);
+    lv_obj_set_style_text_font(g_doormount_status, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(g_doormount_status, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_set_style_text_align(g_doormount_status, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(g_doormount_status, LV_LABEL_LONG_WRAP);
+    lv_obj_align(g_doormount_status, LV_ALIGN_TOP_MID, 0, 88);
+    lv_label_set_text(g_doormount_status, "Scanning DoorMount devices...");
+
+    g_doormount_list = lv_list_create(panel);
+    lv_obj_set_size(g_doormount_list, DOORMOUNT_POPUP_W - 70, 180);
+    lv_obj_align(g_doormount_list, LV_ALIGN_TOP_MID, 0, 145);
+    lv_obj_set_style_bg_color(g_doormount_list, lv_color_hex(CLR_SURFACE_BTN_BOT), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_doormount_list, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(g_doormount_list, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(g_doormount_list, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(g_doormount_list, 8, LV_PART_MAIN);
+
+    lv_obj_t * actions = lv_obj_create(panel);
+    lv_obj_remove_style_all(actions);
+    lv_obj_set_size(actions, lv_pct(100), 60);
+    lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t * rescan_btn = lv_btn_create(actions);
+    lv_obj_set_size(rescan_btn, 220, 52);
+    lv_obj_set_style_bg_color(rescan_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
+    lv_obj_set_style_border_width(rescan_btn, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(rescan_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(rescan_btn, 16, LV_PART_MAIN);
+    lv_obj_add_event_cb(rescan_btn, doormount_rescan_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * rescan_lbl = lv_label_create(rescan_btn);
+    lv_label_set_text(rescan_lbl, "Rescan");
+    lv_obj_set_style_text_font(rescan_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(rescan_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_center(rescan_lbl);
+
+    lv_obj_t * close_btn = lv_btn_create(actions);
+    lv_obj_set_size(close_btn, 220, 52);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x9B3B3B), LV_PART_MAIN);
+    lv_obj_set_style_radius(close_btn, 16, LV_PART_MAIN);
+    lv_obj_set_style_border_width(close_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(close_btn, doormount_close_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, "Close");
+    lv_obj_set_style_text_font(close_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(close_lbl, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_center(close_lbl);
+
+    doormount_scan_and_render();
+}
+
+static void reset_confirm_event(lv_event_t * e) {
+    (void)e;
+
+    reset_popup_close();
+
+    app_state_set_status("Resetting network credentials...");
+    refresh_footer_label();
+
+    if (!device_config_factory_reset()) {
+        app_state_set_status("Reset failed: config write error");
+        refresh_footer_label();
+        return;
+    }
+
+    bool provisioning_started = provisioning_service_restart_for_reprovision();
+    const char * softap_ssid = provisioning_started ? provisioning_service_get_softap_ssid() : "PiSetup-XXXX";
+
+    ui_show_provisioning_screen(softap_ssid);
+}
+
+static void reset_cancel_event(lv_event_t * e) {
+    (void)e;
+    reset_popup_close();
+}
+
+static void show_reset_confirm_popup(void) {
+    reset_popup_close();
+
+    lv_obj_t * screen = lv_scr_act();
+    if (screen == NULL) {
+        return;
+    }
+
+    g_reset_overlay = lv_obj_create(screen);
+    lv_obj_remove_style_all(g_reset_overlay);
+    lv_obj_set_size(g_reset_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_pos(g_reset_overlay, 0, 0);
+    lv_obj_set_style_bg_color(g_reset_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_reset_overlay, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(g_reset_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * panel = lv_obj_create(g_reset_overlay);
+    lv_obj_set_size(panel, SETTINGS_POPUP_W, SETTINGS_POPUP_H);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(CLR_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(panel, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(panel, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(panel, 18, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(panel, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * title = lv_label_create(panel);
+    lv_label_set_text(title, "Reset Network Credentials?");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+
+    lv_obj_t * body = lv_label_create(panel);
+    lv_obj_set_width(body, SETTINGS_POPUP_W - 80);
+    lv_label_set_text(body, "This clears Wi-Fi + userId and returns to device setup QR mode.");
+    lv_obj_set_style_text_font(body, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(body, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_set_style_text_align(body, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(body, LV_LABEL_LONG_WRAP);
+    lv_obj_align(body, LV_ALIGN_CENTER, 0, -10);
+
+    lv_obj_t * actions = lv_obj_create(panel);
+    lv_obj_remove_style_all(actions);
+    lv_obj_set_size(actions, lv_pct(100), 96);
+    lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t * cancel_btn = lv_btn_create(actions);
+    lv_obj_set_size(cancel_btn, 250, 72);
+    lv_obj_set_style_bg_color(cancel_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
+    lv_obj_set_style_border_width(cancel_btn, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(cancel_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(cancel_btn, 18, LV_PART_MAIN);
+    lv_obj_add_event_cb(cancel_btn, reset_cancel_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * cancel_lbl = lv_label_create(cancel_btn);
+    lv_label_set_text(cancel_lbl, "Cancel");
+    lv_obj_set_style_text_font(cancel_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(cancel_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_center(cancel_lbl);
+
+    lv_obj_t * reset_btn = lv_btn_create(actions);
+    lv_obj_set_size(reset_btn, 250, 72);
+    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(0x9B3B3B), LV_PART_MAIN);
+    lv_obj_set_style_radius(reset_btn, 18, LV_PART_MAIN);
+    lv_obj_set_style_border_width(reset_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(reset_btn, reset_confirm_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * reset_lbl = lv_label_create(reset_btn);
+    lv_label_set_text(reset_lbl, "Reset");
+    lv_obj_set_style_text_font(reset_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(reset_lbl, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_center(reset_lbl);
+}
+
+static void settings_reset_event(lv_event_t * e) {
+    (void)e;
+    settings_popup_close();
+    show_reset_confirm_popup();
+}
+
+static void settings_doormount_event(lv_event_t * e) {
+    (void)e;
+    settings_popup_close();
+    show_doormount_popup();
+}
+
+static void settings_close_event(lv_event_t * e) {
+    (void)e;
+    settings_popup_close();
+}
+
+static void show_settings_popup(void) {
+    settings_popup_close();
+
+    lv_obj_t * screen = lv_scr_act();
+    if (screen == NULL) {
+        return;
+    }
+
+    g_settings_overlay = lv_obj_create(screen);
+    lv_obj_remove_style_all(g_settings_overlay);
+    lv_obj_set_size(g_settings_overlay, lv_pct(100), lv_pct(100));
+    lv_obj_set_pos(g_settings_overlay, 0, 0);
+    lv_obj_set_style_bg_color(g_settings_overlay, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(g_settings_overlay, LV_OPA_70, LV_PART_MAIN);
+    lv_obj_clear_flag(g_settings_overlay, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * panel = lv_obj_create(g_settings_overlay);
+    lv_obj_set_size(panel, SETTINGS_POPUP_W, SETTINGS_POPUP_H);
+    lv_obj_center(panel);
+    lv_obj_set_style_bg_color(panel, lv_color_hex(CLR_SURFACE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(panel, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(panel, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(panel, 18, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(panel, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t * title = lv_label_create(panel);
+    lv_label_set_text(title, "Settings");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_style_text_color(title, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 22);
+
+    lv_obj_t * reset_btn = lv_btn_create(panel);
+    lv_obj_set_size(reset_btn, SETTINGS_POPUP_W - 90, 88);
+    lv_obj_align(reset_btn, LV_ALIGN_TOP_MID, 0, 102);
+    lv_obj_set_style_bg_color(reset_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(reset_btn, lv_color_hex(CLR_SURFACE_BTN_BOT), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(reset_btn, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(reset_btn, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(reset_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(reset_btn, 18, LV_PART_MAIN);
+    lv_obj_add_event_cb(reset_btn, settings_reset_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * reset_lbl = lv_label_create(reset_btn);
+    lv_label_set_text(reset_lbl, "Reset Network Credentials/UserId");
+    lv_obj_set_style_text_font(reset_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(reset_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_center(reset_lbl);
+
+    lv_obj_t * doormount_btn = lv_btn_create(panel);
+    lv_obj_set_size(doormount_btn, SETTINGS_POPUP_W - 90, 88);
+    lv_obj_align(doormount_btn, LV_ALIGN_TOP_MID, 0, 206);
+    lv_obj_set_style_bg_color(doormount_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(doormount_btn, lv_color_hex(CLR_SURFACE_BTN_BOT), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(doormount_btn, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(doormount_btn, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(doormount_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(doormount_btn, 18, LV_PART_MAIN);
+    lv_obj_add_event_cb(doormount_btn, settings_doormount_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * doormount_lbl = lv_label_create(doormount_btn);
+    lv_label_set_text(doormount_lbl, "Setup Doormount");
+    lv_obj_set_style_text_font(doormount_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(doormount_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_center(doormount_lbl);
+
+    lv_obj_t * close_btn = lv_btn_create(panel);
+    lv_obj_set_size(close_btn, SETTINGS_POPUP_W - 90, 54);
+    lv_obj_align(close_btn, LV_ALIGN_BOTTOM_MID, 0, -18);
+    lv_obj_set_style_bg_color(close_btn, lv_color_hex(0x9B3B3B), LV_PART_MAIN);
+    lv_obj_set_style_radius(close_btn, 14, LV_PART_MAIN);
+    lv_obj_set_style_border_width(close_btn, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(close_btn, settings_close_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * close_lbl = lv_label_create(close_btn);
+    lv_label_set_text(close_lbl, "Close");
+    lv_obj_set_style_text_font(close_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(close_lbl, lv_color_hex(CLR_TEXT_PRIMARY), LV_PART_MAIN);
+    lv_obj_center(close_lbl);
+}
+
+static void settings_button_event(lv_event_t * e) {
+    (void)e;
+    show_settings_popup();
+}
+
 static void task_start_event(lv_event_t * e) {
     uint32_t idx = (uint32_t)(uintptr_t)lv_event_get_user_data(e);
     if (idx >= g_app_state.home_task_count) return;
@@ -624,6 +1061,19 @@ lv_obj_t * screen_home_create(void) {
     /* Task area geometry */
     int32_t task_y = HEADER_H;
     int32_t task_h = sh - HEADER_H - FOOTER_H;
+    int32_t quick_btn_x = sw - QF_BTN_W - HEADER_PAD_RIGHT;
+    int32_t settings_btn_x = quick_btn_x - HEADER_CTRL_GAP - SETTINGS_BTN_SIZE;
+    int32_t time_col_w = settings_btn_x - HEADER_PAD_LEFT - HEADER_CTRL_GAP;
+    if (time_col_w < 320) {
+        time_col_w = 320;
+    }
+
+    g_settings_overlay = NULL;
+    g_reset_overlay = NULL;
+    g_doormount_overlay = NULL;
+    g_doormount_status = NULL;
+    g_doormount_list = NULL;
+    memset(&g_doormount_networks, 0, sizeof(g_doormount_networks));
 
     /* ── Screen ── */
     lv_obj_t * screen = lv_obj_create(NULL);
@@ -637,7 +1087,7 @@ lv_obj_t * screen_home_create(void) {
     /* ── Clock column (top-left) ── */
     lv_obj_t * time_col = lv_obj_create(screen);
     lv_obj_remove_style_all(time_col);
-    lv_obj_set_size(time_col, 440, HEADER_H - HEADER_PAD_TOP);
+    lv_obj_set_size(time_col, time_col_w, HEADER_H - HEADER_PAD_TOP);
     lv_obj_set_pos(time_col, HEADER_PAD_LEFT, HEADER_PAD_TOP + 25);
     lv_obj_add_flag(time_col, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(time_col, LV_OBJ_FLAG_PRESS_LOCK);
@@ -645,7 +1095,7 @@ lv_obj_t * screen_home_create(void) {
     g_lbl_time = lv_label_create(time_col);
     lv_obj_add_flag(g_lbl_time, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(g_lbl_time, LV_OBJ_FLAG_PRESS_LOCK);
-    lv_obj_set_width(g_lbl_time, 440); /* Keep large clock font visible without overrun on 800px screen */
+    lv_obj_set_width(g_lbl_time, time_col_w); /* Keep large clock font visible without overrun on 800px screen */
     lv_obj_set_style_text_font(g_lbl_time, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(g_lbl_time, lv_color_hex(CLR_TEXT_CLOCK), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(g_lbl_time, CLOCK_LETTER_SPACE, LV_PART_MAIN);
@@ -687,7 +1137,7 @@ lv_obj_t * screen_home_create(void) {
     /* ── Quick Focus button (top-right) ── */
     lv_obj_t * quick_btn = lv_btn_create(screen);
     lv_obj_set_size(quick_btn, QF_BTN_W, QF_BTN_H);
-    lv_obj_set_pos(quick_btn, sw - QF_BTN_W - HEADER_PAD_RIGHT, HEADER_PAD_TOP);
+    lv_obj_set_pos(quick_btn, quick_btn_x, HEADER_PAD_TOP);
     lv_obj_set_style_bg_color(quick_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_color(quick_btn, lv_color_hex(CLR_SURFACE_BTN_BOT), LV_PART_MAIN);
     lv_obj_set_style_bg_grad_dir(quick_btn, LV_GRAD_DIR_VER, LV_PART_MAIN);
@@ -703,14 +1153,37 @@ lv_obj_t * screen_home_create(void) {
     lv_obj_add_event_cb(quick_btn, quick_focus_event, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t * quick_lbl = lv_label_create(quick_btn);
-    lv_label_set_text(quick_lbl, LV_SYMBOL_PLAY "  Quick Focus");
+    lv_label_set_text(quick_lbl, LV_SYMBOL_PLAY " Quick Focus");
     lv_obj_set_style_text_font(quick_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(quick_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
     lv_obj_center(quick_lbl);
-    lv_obj_set_style_pad_left(quick_lbl, 20, LV_PART_MAIN);
-    lv_obj_set_style_pad_right(quick_lbl, 20, LV_PART_MAIN);
+    lv_obj_set_style_pad_left(quick_lbl, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_right(quick_lbl, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_top(quick_lbl, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_bottom(quick_lbl, 12, LV_PART_MAIN);
+
+    /* ── Settings button (between clock + Quick Focus) ── */
+    lv_obj_t * settings_btn = lv_btn_create(screen);
+    lv_obj_set_size(settings_btn, SETTINGS_BTN_SIZE, SETTINGS_BTN_SIZE);
+    lv_obj_set_pos(settings_btn,
+                   settings_btn_x,
+                   HEADER_PAD_TOP + ((QF_BTN_H - SETTINGS_BTN_SIZE) / 2));
+    lv_obj_set_style_bg_color(settings_btn, lv_color_hex(CLR_SURFACE_BTN_TOP), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_color(settings_btn, lv_color_hex(CLR_SURFACE_BTN_BOT), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(settings_btn, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(settings_btn, 2, LV_PART_MAIN);
+    lv_obj_set_style_border_color(settings_btn, lv_color_hex(CLR_BORDER_SUBTLE), LV_PART_MAIN);
+    lv_obj_set_style_radius(settings_btn, 22, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(settings_btn, 18, LV_PART_MAIN);
+    lv_obj_set_style_shadow_color(settings_btn, lv_color_hex(0x000000), LV_PART_MAIN);
+    lv_obj_set_style_shadow_opa(settings_btn, LV_OPA_30, LV_PART_MAIN);
+    lv_obj_add_event_cb(settings_btn, settings_button_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * settings_lbl = lv_label_create(settings_btn);
+    lv_label_set_text(settings_lbl, LV_SYMBOL_SETTINGS);
+    lv_obj_set_style_text_font(settings_lbl, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(settings_lbl, lv_color_hex(CLR_TEXT_SECONDARY), LV_PART_MAIN);
+    lv_obj_center(settings_lbl);
 
     /* ── Task list (flex column, scrollable) ── */
     g_task_list = lv_obj_create(screen);

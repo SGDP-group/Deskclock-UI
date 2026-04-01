@@ -53,6 +53,7 @@ add_subdirectory(lvgl)
 set(APP_SOURCES
     src/device_config.c
     src/provisioning_service.c
+    src/doormount_service.c
     src/home_api_client.c
     src/net_stream.c
     src/focus_image_stream.c
