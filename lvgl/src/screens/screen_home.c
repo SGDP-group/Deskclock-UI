@@ -11,8 +11,13 @@
 
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifndef _WIN32
+#include <pthread.h>
+#endif
 
 /* -----------------------------------------------------------------------
  * Fonts
@@ -79,6 +84,7 @@ extern const lv_font_t lv_font_montserrat_48 ;
 #define SETTINGS_POPUP_H   360
 #define DOORMOUNT_POPUP_W  700
 #define DOORMOUNT_POPUP_H  400
+#define DOORMOUNT_SETUP_POLL_MS 150
 
 /* Task carousel area */
 #define TASK_AREA_PAD_X    24
@@ -139,9 +145,15 @@ static lv_obj_t * g_reset_overlay = NULL;
 static lv_obj_t * g_doormount_overlay = NULL;
 static lv_obj_t * g_doormount_status = NULL;
 static lv_obj_t * g_doormount_list = NULL;
+static lv_timer_t * g_doormount_setup_timer = NULL;
 static TaskCardRefs g_cards[HOME_CARD_POOL_SIZE];
 static lv_obj_t * g_lbl_empty_state = NULL;
 static DoormountNetworkList g_doormount_networks;
+static volatile bool g_doormount_setup_inflight = false;
+static volatile bool g_doormount_setup_done = false;
+static bool g_doormount_setup_success = false;
+static char g_doormount_setup_error[160] = {0};
+static char g_doormount_selected_ssid[DOORMOUNT_SSID_MAX_LEN] = {0};
 
 static bool g_fetch_inflight = false;
 static bool g_pull_tracking = false;
@@ -513,8 +525,79 @@ static void doormount_popup_close(void) {
 }
 
 static void doormount_scan_and_render(void);
+static void doormount_setup_poll_cb(lv_timer_t * timer);
+
+#ifndef _WIN32
+static void * doormount_setup_worker(void * arg) {
+    (void)arg;
+
+    char error[160] = {0};
+    bool ok = doormount_service_setup_selected(g_doormount_selected_ssid, error, sizeof(error));
+
+    g_doormount_setup_success = ok;
+    if (!ok) {
+        copy_text_safe(g_doormount_setup_error,
+                       sizeof(g_doormount_setup_error),
+                       (error[0] != '\0') ? error : "Unknown error");
+    } else {
+        g_doormount_setup_error[0] = '\0';
+    }
+
+    g_doormount_setup_done = true;
+    return NULL;
+}
+#endif
+
+static void doormount_setup_poll_cb(lv_timer_t * timer) {
+    (void)timer;
+
+    if (!g_doormount_setup_inflight || !g_doormount_setup_done) {
+        return;
+    }
+
+    g_doormount_setup_inflight = false;
+    g_doormount_setup_done = false;
+
+    if (g_doormount_setup_timer != NULL) {
+        lv_timer_delete(g_doormount_setup_timer);
+        g_doormount_setup_timer = NULL;
+    }
+
+    if (!g_doormount_setup_success) {
+        if (g_doormount_list != NULL && lv_obj_is_valid(g_doormount_list)) {
+            lv_obj_clear_state(g_doormount_list, LV_STATE_DISABLED);
+        }
+
+        if (g_doormount_status != NULL && lv_obj_is_valid(g_doormount_status)) {
+            char status_line[196];
+            snprintf(status_line,
+                     sizeof(status_line),
+                     "Setup failed: %s",
+                     (g_doormount_setup_error[0] != '\0') ? g_doormount_setup_error : "Unknown error");
+            lv_label_set_text(g_doormount_status, status_line);
+        }
+
+        app_state_set_status("Doormount setup failed");
+        refresh_footer_label();
+        return;
+    }
+
+    app_state_set_status("Doormount setup complete");
+    refresh_footer_label();
+
+    if (g_doormount_overlay != NULL && lv_obj_is_valid(g_doormount_overlay)) {
+        doormount_popup_close();
+    }
+}
 
 static void doormount_select_event(lv_event_t * e) {
+    if (g_doormount_setup_inflight) {
+        if (g_doormount_status != NULL && lv_obj_is_valid(g_doormount_status)) {
+            lv_label_set_text(g_doormount_status, "Setup already in progress...");
+        }
+        return;
+    }
+
     if (g_doormount_status == NULL || g_doormount_list == NULL) {
         return;
     }
@@ -525,6 +608,7 @@ static void doormount_select_event(lv_event_t * e) {
     }
 
     const char * ssid = g_doormount_networks.ssids[idx];
+    copy_text_safe(g_doormount_selected_ssid, sizeof(g_doormount_selected_ssid), ssid);
 
     char status_line[128];
     snprintf(status_line, sizeof(status_line), "Connecting to %s...", ssid);
@@ -532,29 +616,54 @@ static void doormount_select_event(lv_event_t * e) {
     lv_obj_add_state(g_doormount_list, LV_STATE_DISABLED);
     lv_refr_now(NULL);
 
+    g_doormount_setup_inflight = true;
+    g_doormount_setup_done = false;
+    g_doormount_setup_success = false;
+    g_doormount_setup_error[0] = '\0';
+
+    if (g_doormount_setup_timer != NULL) {
+        lv_timer_delete(g_doormount_setup_timer);
+        g_doormount_setup_timer = NULL;
+    }
+    g_doormount_setup_timer = lv_timer_create(doormount_setup_poll_cb, DOORMOUNT_SETUP_POLL_MS, NULL);
+
+#ifdef _WIN32
     char error[160] = {0};
-    bool ok = doormount_service_setup_selected(ssid, error, sizeof(error));
-
-    lv_obj_clear_state(g_doormount_list, LV_STATE_DISABLED);
-
+    bool ok = doormount_service_setup_selected(g_doormount_selected_ssid, error, sizeof(error));
+    g_doormount_setup_success = ok;
     if (!ok) {
-        snprintf(status_line,
-                 sizeof(status_line),
-                 "Setup failed: %s",
-                 (error[0] != '\0') ? error : "Unknown error");
-        lv_label_set_text(g_doormount_status, status_line);
+        copy_text_safe(g_doormount_setup_error,
+                       sizeof(g_doormount_setup_error),
+                       (error[0] != '\0') ? error : "Unknown error");
+    }
+    g_doormount_setup_done = true;
+#else
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, doormount_setup_worker, NULL) != 0) {
+        g_doormount_setup_inflight = false;
+        if (g_doormount_setup_timer != NULL) {
+            lv_timer_delete(g_doormount_setup_timer);
+            g_doormount_setup_timer = NULL;
+        }
+
+        lv_obj_clear_state(g_doormount_list, LV_STATE_DISABLED);
+        lv_label_set_text(g_doormount_status, "Failed to start setup worker.");
         app_state_set_status("Doormount setup failed");
         refresh_footer_label();
         return;
     }
 
-    lv_label_set_text(g_doormount_status, "Doormount setup complete. ESP32 is restarting.");
-    app_state_set_status("Doormount setup complete");
-    refresh_footer_label();
+    pthread_detach(worker);
+#endif
 }
 
 static void doormount_scan_and_render(void) {
     if (g_doormount_status == NULL || g_doormount_list == NULL) {
+        return;
+    }
+
+    if (g_doormount_setup_inflight) {
+        lv_label_set_text(g_doormount_status, "Setup in progress... please wait.");
         return;
     }
 
@@ -596,6 +705,14 @@ static void doormount_scan_and_render(void) {
 
 static void doormount_rescan_event(lv_event_t * e) {
     (void)e;
+
+    if (g_doormount_setup_inflight) {
+        if (g_doormount_status != NULL && lv_obj_is_valid(g_doormount_status)) {
+            lv_label_set_text(g_doormount_status, "Setup in progress... wait for completion.");
+        }
+        return;
+    }
+
     doormount_scan_and_render();
 }
 
@@ -1073,6 +1190,15 @@ lv_obj_t * screen_home_create(void) {
     g_doormount_overlay = NULL;
     g_doormount_status = NULL;
     g_doormount_list = NULL;
+    if (g_doormount_setup_timer != NULL) {
+        lv_timer_delete(g_doormount_setup_timer);
+        g_doormount_setup_timer = NULL;
+    }
+    g_doormount_setup_inflight = false;
+    g_doormount_setup_done = false;
+    g_doormount_setup_success = false;
+    g_doormount_setup_error[0] = '\0';
+    g_doormount_selected_ssid[0] = '\0';
     memset(&g_doormount_networks, 0, sizeof(g_doormount_networks));
 
     /* ── Screen ── */
