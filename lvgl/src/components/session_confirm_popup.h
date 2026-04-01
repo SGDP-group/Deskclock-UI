@@ -18,8 +18,8 @@ void session_confirm_popup_set_start_cb(session_confirm_start_cb_t cb);
 /* Shows the quick-focus confirmation popup. */
 void session_confirm_popup_show_quick(void);
 
-/* Shows the task-start confirmation popup with dynamic subtask text. */
-void session_confirm_popup_show_task(const char * subtask_name, uint8_t task_index);
+/* Shows the task-start confirmation popup with dynamic task title text. */
+void session_confirm_popup_show_task(const char * task_title, uint8_t task_index);
 
 /* Closes the popup with exit animation if it is visible. */
 void session_confirm_popup_close(void);
