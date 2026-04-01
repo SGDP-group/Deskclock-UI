@@ -184,8 +184,8 @@ static void create_popup_shell(void) {
 
     s_task_title_label = lv_label_create(s_panel);
     lv_obj_set_width(s_task_title_label, POPUP_W - 110);
-    lv_obj_set_height(s_task_title_label, lv_font_get_line_height(&lv_font_montserrat_48));
-    lv_obj_set_style_text_font(s_task_title_label, &lv_font_montserrat_48, LV_PART_MAIN);
+    lv_obj_set_height(s_task_title_label, lv_font_get_line_height(&lv_font_montserrat_24));
+    lv_obj_set_style_text_font(s_task_title_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(s_task_title_label, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
     lv_obj_set_style_text_align(s_task_title_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_label_set_long_mode(s_task_title_label, LV_LABEL_LONG_DOT);
