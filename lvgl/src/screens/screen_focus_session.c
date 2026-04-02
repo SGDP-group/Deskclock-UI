@@ -7,6 +7,7 @@
 #include "src/focus_image_stream.h"
 #include "src/focus_camera_capture.h"
 #include "src/net_stream.h"
+#include "src/doormount_led_sync.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -191,6 +192,7 @@ static void stop_and_return_home(void) {
         home_api_mark_subtask_pending(s_task_id);
     }
 
+    doormount_led_sync_set_focus_active(false);
     focus_camera_capture_stop();
     focus_image_stream_stop();
     cleanup_countdown_timer();
@@ -211,6 +213,7 @@ static void start_focus_seconds(uint32_t seconds, bool bonus_focus) {
     set_controls_for_focus(true);
     focus_camera_capture_set_paused(false);
     focus_image_stream_set_paused(false);
+    doormount_led_sync_set_focus_active(true);
     app_state_set_status("Session running");
     update_timer_text();
 }
@@ -252,6 +255,7 @@ static void start_break_countdown(void) {
     set_controls_for_focus(false);
     focus_camera_capture_set_paused(true);
     focus_image_stream_set_paused(true);
+    doormount_led_sync_set_focus_active(false);
     app_state_set_status("Break started");
     update_timer_text();
 }
@@ -413,6 +417,7 @@ static void show_break_popup(void) {
     lv_obj_center(okay_label);
 
     s_phase = PHASE_WAITING_POPUP;
+    doormount_led_sync_set_focus_active(false);
     app_state_set_status(s_waiting_completion_confirm ? "Choose next step" : "Break options");
 }
 
@@ -470,6 +475,7 @@ static void show_resume_popup(void) {
     lv_obj_center(resume_label);
 
     s_phase = PHASE_WAITING_POPUP;
+    doormount_led_sync_set_focus_active(false);
     app_state_set_status("Break complete");
 }
 
@@ -535,6 +541,7 @@ static void pause_toggle_event(lv_event_t * e) {
     s_paused = !s_paused;
     focus_camera_capture_set_paused(s_paused);
     focus_image_stream_set_paused(s_paused);
+    doormount_led_sync_set_focus_active(!s_paused);
 
     if (s_pause_label != NULL) {
         lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nRESUME" : "PAUSE");
@@ -591,6 +598,7 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     s_task_marked_in_progress = false;
     s_task_marked_completed = false;
     s_task_remaining_seconds = s_is_quick ? 0U : total_seconds;
+    doormount_led_sync_set_focus_active(false);
 
     bool stream_ok = start_session_stream_key();
 

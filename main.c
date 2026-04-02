@@ -2,6 +2,7 @@
 #include "src/ui.h"
 #include "src/device_config.h"
 #include "src/provisioning_service.h"
+#include "src/doormount_led_sync.h"
 
 #ifdef _WIN32
     #include <SDL2/SDL.h>
@@ -203,6 +204,7 @@ int main(int argc, char *argv[]) {
         }
 
         lv_timer_handler();
+        doormount_led_sync_tick();
 #ifdef _WIN32
         SDL_Delay(5);
 #else
