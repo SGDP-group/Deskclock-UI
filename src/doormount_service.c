@@ -21,6 +21,9 @@
 #define DOORMOUNT_DEVICE_HOST "192.168.4.1"
 #define DOORMOUNT_DEVICE_PORT 8080
 #define DOORMOUNT_SETUP_PATH "/api/doormount/setup"
+#define DOORMOUNT_LED_PATH "/api/doormount/led"
+#define DOORMOUNT_RUNTIME_HOST_PRIMARY "doormount.local"
+#define DOORMOUNT_RUNTIME_HOST_FALLBACK "doormount"
 #define DOORMOUNT_WIFI_IFNAME "wlan0"
 #define DOORMOUNT_SCAN_CMD "nmcli -t -f SSID dev wifi list --rescan yes"
 #define DOORMOUNT_LOG_PATH "doormount_log.txt"
@@ -140,6 +143,18 @@ static int run_command(const char * cmd) {
     return rc;
 }
 
+static const char * led_state_to_text(DoormountLedState state) {
+    switch (state) {
+        case DOORMOUNT_LED_RED:
+            return "RED";
+        case DOORMOUNT_LED_YELLOW:
+            return "YELLOW";
+        case DOORMOUNT_LED_GREEN:
+        default:
+            return "GREEN";
+    }
+}
+
 #ifndef _WIN32
 static bool list_contains_ssid(const DoormountNetworkList * list, const char * ssid) {
     if (list == NULL || ssid == NULL) {
@@ -213,6 +228,100 @@ static bool response_is_success(const char * response) {
 
     return (strncmp(response, "HTTP/1.1 2", 10) == 0) ||
            (strncmp(response, "HTTP/1.0 2", 10) == 0);
+}
+
+static bool post_doormount_led_to_host(const char * host,
+                                       const char * state_text,
+                                       char * error,
+                                       size_t error_len) {
+    if (host == NULL || host[0] == '\0' || state_text == NULL || state_text[0] == '\0') {
+        set_error(error, error_len, "Invalid DoorMount LED request");
+        return false;
+    }
+
+    char body[64];
+    int body_len = snprintf(body,
+                            sizeof(body),
+                            "{\"state\":\"%s\"}",
+                            state_text);
+    if (body_len <= 0 || (size_t)body_len >= sizeof(body)) {
+        set_error(error, error_len, "DoorMount LED payload too large");
+        return false;
+    }
+
+    char request[512];
+    int request_len = snprintf(request,
+                               sizeof(request),
+                               "POST " DOORMOUNT_LED_PATH " HTTP/1.1\r\n"
+                               "Host: %s\r\n"
+                               "Connection: close\r\n"
+                               "Content-Type: application/json\r\n"
+                               "Content-Length: %d\r\n\r\n"
+                               "%s",
+                               host,
+                               body_len,
+                               body);
+    if (request_len <= 0 || (size_t)request_len >= sizeof(request)) {
+        set_error(error, error_len, "DoorMount LED request too large");
+        return false;
+    }
+
+    struct addrinfo hints;
+    struct addrinfo * res = NULL;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    char port[8];
+    snprintf(port, sizeof(port), "%d", DOORMOUNT_DEVICE_PORT);
+
+    if (getaddrinfo(host, port, &hints, &res) != 0 || res == NULL) {
+        set_error(error, error_len, "Could not resolve DoorMount runtime host");
+        return false;
+    }
+
+    int sock = socket(res->ai_family, res->ai_socktype, res->ai_protocol);
+    if (sock < 0) {
+        freeaddrinfo(res);
+        set_error(error, error_len, "Could not open DoorMount LED socket");
+        return false;
+    }
+
+    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+        close(sock);
+        freeaddrinfo(res);
+        set_error(error, error_len, "Could not connect to DoorMount runtime endpoint");
+        return false;
+    }
+
+    freeaddrinfo(res);
+
+    if (!send_all(sock, request, (size_t)request_len)) {
+        close(sock);
+        set_error(error, error_len, "Failed to send DoorMount LED payload");
+        return false;
+    }
+
+    char response[512];
+    size_t used = 0;
+    memset(response, 0, sizeof(response));
+
+    while (used + 1 < sizeof(response)) {
+        ssize_t n = recv(sock, response + used, sizeof(response) - used - 1, 0);
+        if (n <= 0) {
+            break;
+        }
+        used += (size_t)n;
+    }
+
+    close(sock);
+
+    if (!response_is_success(response)) {
+        set_error(error, error_len, "DoorMount rejected LED state update");
+        return false;
+    }
+
+    return true;
 }
 
 static bool post_doormount_setup(const DeviceConfig * config, char * error, size_t error_len) {
@@ -436,5 +545,40 @@ bool doormount_service_setup_selected(const char * doormount_ssid, char * error,
 
     log_doormount("doormount setup success");
     return true;
+#endif
+}
+
+bool doormount_service_set_led_state(DoormountLedState state, char * error, size_t error_len) {
+    set_error(error, error_len, "");
+
+#ifdef _WIN32
+    set_error(error, error_len, "DoorMount LED control is supported on Linux only");
+    return false;
+#else
+    const char * state_text = led_state_to_text(state);
+    char primary_error[128] = {0};
+
+    if (post_doormount_led_to_host(DOORMOUNT_RUNTIME_HOST_PRIMARY,
+                                   state_text,
+                                   primary_error,
+                                   sizeof(primary_error))) {
+        return true;
+    }
+
+    if (strcmp(DOORMOUNT_RUNTIME_HOST_PRIMARY, DOORMOUNT_RUNTIME_HOST_FALLBACK) != 0 &&
+        post_doormount_led_to_host(DOORMOUNT_RUNTIME_HOST_FALLBACK,
+                                   state_text,
+                                   error,
+                                   error_len)) {
+        return true;
+    }
+
+    if (primary_error[0] != '\0') {
+        set_error(error, error_len, primary_error);
+    } else {
+        set_error(error, error_len, "DoorMount LED request failed");
+    }
+
+    return false;
 #endif
 }
