@@ -39,3 +39,5 @@ app_data.conf
 # OS files
 Thumbs.db
 .DS_Store
+
+VIVA_IMPLEMENTATION_PACK.md
