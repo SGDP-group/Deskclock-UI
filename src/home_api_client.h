@@ -21,8 +21,8 @@ typedef struct {
 } HomeApiTask;
 
 bool home_api_fetch_due_today(HomeApiTask * tasks, uint8_t * out_count, uint8_t cap);
-bool home_api_mark_subtask_in_progress(int subtask_id);
-bool home_api_mark_subtask_completed(int subtask_id);
-bool home_api_mark_subtask_pending(int subtask_id);
+bool home_api_mark_subtask_in_progress(int subtask_id, const char * session_id);
+bool home_api_mark_subtask_completed(int subtask_id, const char * session_id);
+bool home_api_mark_subtask_pending(int subtask_id, const char * session_id);
 
 #endif /* HOME_API_CLIENT_H */

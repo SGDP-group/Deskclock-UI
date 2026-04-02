@@ -61,6 +61,7 @@ static uint32_t s_no_frame_ticks = 0;
 static uint32_t s_prev_frames_captured = 0;
 static uint32_t s_prev_frames_enqueued = 0;
 static char s_session_title[96] = {0};
+static char s_status_session_id[64] = {0};
 
 static void show_break_popup(void);
 
@@ -136,6 +137,27 @@ static uint32_t min_u32(uint32_t a, uint32_t b) {
     return (a < b) ? a : b;
 }
 
+static void build_status_session_id(void) {
+    time_t now = time(NULL);
+    unsigned long timestamp = (unsigned long)now;
+
+    if (!s_is_quick && s_task_id > 0) {
+        snprintf(s_status_session_id,
+                 sizeof(s_status_session_id),
+                 "%d_task_%d_%lu",
+                 HOME_API_USER_ID,
+                 s_task_id,
+                 timestamp);
+        return;
+    }
+
+    snprintf(s_status_session_id,
+             sizeof(s_status_session_id),
+             "%d_quick_%lu",
+             HOME_API_USER_ID,
+             timestamp);
+}
+
 static void close_popup(void) {
     if (s_popup_overlay != NULL) {
         lv_obj_del(s_popup_overlay);
@@ -188,7 +210,7 @@ static void cleanup_countdown_timer(void) {
 
 static void stop_and_return_home(void) {
     if (!s_is_quick && s_task_id > 0 && !s_task_marked_completed) {
-        home_api_mark_subtask_pending(s_task_id);
+        home_api_mark_subtask_pending(s_task_id, s_status_session_id);
     }
 
     focus_camera_capture_stop();
@@ -311,7 +333,7 @@ static void popup_complete_okay_event(lv_event_t * e) {
     (void)e;
     if (!s_is_quick && s_task_id > 0 && !s_task_marked_completed) {
         s_task_marked_completed = true;
-        home_api_mark_subtask_completed(s_task_id);
+        home_api_mark_subtask_completed(s_task_id, s_status_session_id);
     }
     s_waiting_completion_confirm = false;
     close_popup();
@@ -591,11 +613,13 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
     s_task_marked_in_progress = false;
     s_task_marked_completed = false;
     s_task_remaining_seconds = s_is_quick ? 0U : total_seconds;
+    memset(s_status_session_id, 0, sizeof(s_status_session_id));
+    build_status_session_id();
 
     bool stream_ok = start_session_stream_key();
 
     if (!s_is_quick && s_task_id > 0) {
-        s_task_marked_in_progress = home_api_mark_subtask_in_progress(s_task_id);
+        s_task_marked_in_progress = home_api_mark_subtask_in_progress(s_task_id, s_status_session_id);
     }
 
     bool camera_ok = focus_camera_capture_start();

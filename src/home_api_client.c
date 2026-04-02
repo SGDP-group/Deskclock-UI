@@ -405,7 +405,7 @@ static bool response_is_success(const char * response) {
            (strncmp(response, "HTTP/1.0 2", 10) == 0);
 }
 
-static bool http_patch_subtask_status(int subtask_id, int status_id, bool completed) {
+static bool http_patch_subtask_status(int subtask_id, int status_id, bool completed, const char * session_id) {
     if (subtask_id <= 0 || status_id <= 0) {
         return false;
     }
@@ -413,12 +413,22 @@ static bool http_patch_subtask_status(int subtask_id, int status_id, bool comple
     char path[96];
     snprintf(path, sizeof(path), "/api/subtasks/%d", subtask_id);
 
-    char body[96];
-    int body_len = snprintf(body,
+    char body[192];
+    int body_len = 0;
+    if (session_id != NULL && session_id[0] != '\0') {
+        body_len = snprintf(body,
+                            sizeof(body),
+                            "{\"statusId\":%d,\"completed\":%s,\"sessionId\":\"%s\"}",
+                            status_id,
+                            completed ? "true" : "false",
+                            session_id);
+    } else {
+        body_len = snprintf(body,
                             sizeof(body),
                             "{\"statusId\":%d,\"completed\":%s}",
                             status_id,
                             completed ? "true" : "false");
+    }
     if (body_len <= 0 || (size_t)body_len >= sizeof(body)) {
         return false;
     }
@@ -549,14 +559,14 @@ bool home_api_fetch_due_today(HomeApiTask * tasks, uint8_t * out_count, uint8_t 
     return true;
 }
 
-bool home_api_mark_subtask_in_progress(int subtask_id) {
-    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_INPROGRESS, false);
+bool home_api_mark_subtask_in_progress(int subtask_id, const char * session_id) {
+    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_INPROGRESS, false, session_id);
 }
 
-bool home_api_mark_subtask_completed(int subtask_id) {
-    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_COMPLETED, true);
+bool home_api_mark_subtask_completed(int subtask_id, const char * session_id) {
+    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_COMPLETED, true, session_id);
 }
 
-bool home_api_mark_subtask_pending(int subtask_id) {
-    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_PENDING, false);
+bool home_api_mark_subtask_pending(int subtask_id, const char * session_id) {
+    return http_patch_subtask_status(subtask_id, HOME_SUBTASK_STATUS_PENDING, false, session_id);
 }
