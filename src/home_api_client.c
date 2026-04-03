@@ -11,18 +11,98 @@
 #include <windows.h>
 #pragma comment(lib, "ws2_32.lib")
 #else
+#include <errno.h>
+#include <fcntl.h>
 #include <sys/socket.h>
+#include <sys/select.h>
+#include <sys/time.h>
 #include <netdb.h>
 #include <unistd.h>
 #endif
 
 #define HOME_HTTP_BUF_SIZE 16384
+#define HOME_HTTP_CONNECT_TIMEOUT_MS 2500
+#define HOME_HTTP_IO_TIMEOUT_SEC 3
 
 #define HOME_SUBTASK_STATUS_PENDING     1
 #define HOME_SUBTASK_STATUS_INPROGRESS  2
 #define HOME_SUBTASK_STATUS_COMPLETED   3
 
 static bool g_winsock_ready = false;
+
+#ifdef _WIN32
+static void apply_socket_timeouts_win(SOCKET sock) {
+    DWORD timeout_ms = HOME_HTTP_IO_TIMEOUT_SEC * 1000U;
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, (const char *)&timeout_ms, sizeof(timeout_ms));
+}
+#else
+static void apply_socket_timeouts_posix(int sock) {
+    struct timeval tv = {
+        .tv_sec = HOME_HTTP_IO_TIMEOUT_SEC,
+        .tv_usec = 0,
+    };
+
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+}
+
+static bool connect_with_timeout_posix(int sock,
+                                       const struct sockaddr * addr,
+                                       socklen_t addrlen,
+                                       int timeout_ms) {
+    int flags = fcntl(sock, F_GETFL, 0);
+    if (flags < 0) {
+        return false;
+    }
+
+    if (fcntl(sock, F_SETFL, flags | O_NONBLOCK) < 0) {
+        return false;
+    }
+
+    if (connect(sock, addr, addrlen) == 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        return true;
+    }
+
+    if (errno != EINPROGRESS) {
+        (void)fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    fd_set write_fds;
+    FD_ZERO(&write_fds);
+    FD_SET(sock, &write_fds);
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int ready = select(sock + 1, NULL, &write_fds, NULL, &tv);
+    if (ready <= 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    int so_error = 0;
+    socklen_t so_error_len = sizeof(so_error);
+    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    if (so_error != 0) {
+        (void)fcntl(sock, F_SETFL, flags);
+        return false;
+    }
+
+    if (fcntl(sock, F_SETFL, flags) < 0) {
+        return false;
+    }
+
+    return true;
+}
+#endif
 
 static void build_due_today_path(char * path, size_t path_len) {
     if (path == NULL || path_len == 0) {
@@ -328,6 +408,8 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
         return false;
     }
 
+    apply_socket_timeouts_win(sock);
+
     if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
         closesocket(sock);
         freeaddrinfo(res);
@@ -365,7 +447,12 @@ static bool http_fetch_due_today(char * body_out, size_t body_out_len) {
         return false;
     }
 
-    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+    apply_socket_timeouts_posix(sock);
+
+    if (!connect_with_timeout_posix(sock,
+                                    res->ai_addr,
+                                    (socklen_t)res->ai_addrlen,
+                                    HOME_HTTP_CONNECT_TIMEOUT_MS)) {
         close(sock);
         freeaddrinfo(res);
         return false;
@@ -472,6 +559,8 @@ static bool http_patch_subtask_status(int subtask_id, int status_id, bool comple
         return false;
     }
 
+    apply_socket_timeouts_win(sock);
+
     if (connect(sock, res->ai_addr, (int)res->ai_addrlen) == SOCKET_ERROR) {
         closesocket(sock);
         freeaddrinfo(res);
@@ -509,7 +598,12 @@ static bool http_patch_subtask_status(int subtask_id, int status_id, bool comple
         return false;
     }
 
-    if (connect(sock, res->ai_addr, res->ai_addrlen) < 0) {
+    apply_socket_timeouts_posix(sock);
+
+    if (!connect_with_timeout_posix(sock,
+                                    res->ai_addr,
+                                    (socklen_t)res->ai_addrlen,
+                                    HOME_HTTP_CONNECT_TIMEOUT_MS)) {
         close(sock);
         freeaddrinfo(res);
         return false;

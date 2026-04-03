@@ -1,4 +1,5 @@
 #include "screen_home.h"
+#include "screen_focus_session.h"
 #include "lvgl/lvgl.h"
 #include "../data/app_state.h"
 #include "../components/session_confirm_popup.h"
@@ -473,6 +474,14 @@ static void task_list_scroll_cb(lv_event_t * e) {
 }
 
 static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index) {
+    if (screen_focus_session_cleanup_inflight()) {
+        app_state_set_status("Finalizing previous session...");
+        if (g_lbl_footer != NULL) {
+            lv_label_set_text(g_lbl_footer, g_app_state.status_message);
+        }
+        return;
+    }
+
     if (kind == SESSION_CONFIRM_KIND_QUICK) {
         ui_navigate_camera_preview("Quick Session", (uint32_t)HOME_QUICK_SESSION_MINUTES * 60U, true, -1);
         return;
@@ -489,6 +498,15 @@ static void start_session_from_popup(SessionConfirmKind kind, uint8_t task_index
 
 static void quick_focus_event(lv_event_t * e) {
     (void)e;
+
+    if (screen_focus_session_cleanup_inflight()) {
+        app_state_set_status("Finalizing previous session...");
+        if (g_lbl_footer != NULL) {
+            lv_label_set_text(g_lbl_footer, g_app_state.status_message);
+        }
+        return;
+    }
+
     app_state_set_status("Quick Focus ready");
     session_confirm_popup_show_quick();
     if (g_lbl_footer != NULL) {
