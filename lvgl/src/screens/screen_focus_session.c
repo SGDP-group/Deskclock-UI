@@ -3,12 +3,23 @@
 #include "../ui.h"
 #include "../data/app_state.h"
 #include "src/home_config.h"
+#include "src/home_api_client.h"
 #include "src/focus_image_stream.h"
 #include "src/focus_camera_capture.h"
+#include "src/net_stream.h"
+#include "src/doormount_led_sync.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <unistd.h>
+#endif
 
 #define CLR_BG             0x000000
 #define CLR_TITLE          0xF2F2F2
@@ -27,6 +38,8 @@
 
 #define POPUP_W            640
 #define POPUP_H            380
+#define STOP_PENDING_RETRY_DELAY_MS 1000U
+#define STOP_PENDING_RETRY_MAX_ATTEMPTS 8U
 
 typedef enum {
     PHASE_FOCUS = 0,
@@ -45,6 +58,10 @@ static lv_obj_t * s_popup_overlay = NULL;
 static bool s_paused = false;
 static bool s_is_quick = false;
 static bool s_bonus_focus = false;
+static bool s_waiting_completion_confirm = false;
+static bool s_task_marked_in_progress = false;
+static bool s_task_marked_completed = false;
+static bool s_stop_cleanup_inflight = false;
 static SessionPhase s_phase = PHASE_FOCUS;
 
 static uint32_t s_phase_total_seconds = 0;
@@ -53,13 +70,179 @@ static uint32_t s_task_remaining_seconds = 0;
 static int s_task_id = -1;
 static uint32_t s_diag_tick_counter = 0;
 static uint32_t s_no_frame_ticks = 0;
+static uint32_t s_prev_frames_captured = 0;
+static uint32_t s_prev_frames_enqueued = 0;
 static char s_session_title[96] = {0};
+
+#ifndef _WIN32
+static pthread_mutex_t s_stop_cleanup_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+static void show_break_popup(void);
+
+static void sleep_ms(uint32_t delay_ms) {
+#ifdef _WIN32
+    Sleep(delay_ms);
+#else
+    usleep((useconds_t)delay_ms * 1000U);
+#endif
+}
+
+static bool stop_cleanup_try_begin(void) {
+#ifdef _WIN32
+    if (s_stop_cleanup_inflight) {
+        return false;
+    }
+
+    s_stop_cleanup_inflight = true;
+    return true;
+#else
+    bool can_begin = false;
+
+    pthread_mutex_lock(&s_stop_cleanup_lock);
+    if (!s_stop_cleanup_inflight) {
+        s_stop_cleanup_inflight = true;
+        can_begin = true;
+    }
+    pthread_mutex_unlock(&s_stop_cleanup_lock);
+
+    return can_begin;
+#endif
+}
+
+static void stop_cleanup_finish(void) {
+#ifdef _WIN32
+    s_stop_cleanup_inflight = false;
+#else
+    pthread_mutex_lock(&s_stop_cleanup_lock);
+    s_stop_cleanup_inflight = false;
+    pthread_mutex_unlock(&s_stop_cleanup_lock);
+#endif
+}
+
+bool screen_focus_session_cleanup_inflight(void) {
+#ifdef _WIN32
+    return s_stop_cleanup_inflight;
+#else
+    bool inflight = false;
+
+    pthread_mutex_lock(&s_stop_cleanup_lock);
+    inflight = s_stop_cleanup_inflight;
+    pthread_mutex_unlock(&s_stop_cleanup_lock);
+
+    return inflight;
+#endif
+}
+
+static void mark_pending_with_retry(int task_id) {
+    if (task_id <= 0) {
+        return;
+    }
+
+    for (uint32_t attempt = 0; attempt < STOP_PENDING_RETRY_MAX_ATTEMPTS; attempt++) {
+        if (home_api_mark_subtask_pending(task_id)) {
+            return;
+        }
+
+        if (attempt + 1U < STOP_PENDING_RETRY_MAX_ATTEMPTS) {
+            sleep_ms(STOP_PENDING_RETRY_DELAY_MS);
+        }
+    }
+}
+
+static void run_stop_cleanup(bool mark_pending, int task_id) {
+    focus_camera_capture_stop();
+    focus_image_stream_stop();
+    stop_cleanup_finish();
+
+    if (mark_pending) {
+        mark_pending_with_retry(task_id);
+    }
+}
+
+#ifndef _WIN32
+typedef struct {
+    bool mark_pending;
+    int task_id;
+} StopCleanupContext;
+
+static void * stop_cleanup_worker(void * arg) {
+    StopCleanupContext * ctx = (StopCleanupContext *)arg;
+
+    if (ctx == NULL) {
+        run_stop_cleanup(false, -1);
+        return NULL;
+    }
+
+    run_stop_cleanup(ctx->mark_pending, ctx->task_id);
+    free(ctx);
+    return NULL;
+}
+#endif
+
+static void start_stop_cleanup(bool mark_pending, int task_id) {
+    if (!stop_cleanup_try_begin()) {
+        return;
+    }
+
+#ifdef _WIN32
+    run_stop_cleanup(mark_pending, task_id);
+#else
+    StopCleanupContext * ctx = (StopCleanupContext *)malloc(sizeof(*ctx));
+    if (ctx == NULL) {
+        run_stop_cleanup(mark_pending, task_id);
+        return;
+    }
+
+    ctx->mark_pending = mark_pending;
+    ctx->task_id = task_id;
+
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, stop_cleanup_worker, ctx) != 0) {
+        free(ctx);
+        run_stop_cleanup(mark_pending, task_id);
+        return;
+    }
+
+    pthread_detach(worker);
+#endif
+}
 
 static void update_runtime_diagnostics_status(void) {
     FocusImageStreamStats stream_stats = focus_image_stream_get_stats();
     FocusCameraCaptureStats cam_stats = focus_camera_capture_get_stats();
 
-    char msg[128];
+    const uint32_t cap_delta = cam_stats.frames_captured - s_prev_frames_captured;
+    const uint32_t tx_delta = stream_stats.frames_enqueued - s_prev_frames_enqueued;
+
+    const char * cam_state = "STARTING";
+    const char * link_state = "DISCONNECTED";
+    const char * send_state = "IDLE";
+    char msg[196];
+
+    if (cam_stats.camera_ready) {
+        cam_state = cam_stats.paused ? "PAUSED" : "CAPTURING";
+    } else if (cam_stats.capture_failures > 0U) {
+        cam_state = "ERROR";
+    }
+
+    if (stream_stats.connected) {
+        link_state = "CONNECTED";
+    } else if (net_stream_fail_streak() > 0U) {
+        link_state = "RETRYING";
+    }
+
+    if (cam_stats.paused || s_phase != PHASE_FOCUS) {
+        send_state = "IDLE";
+    } else if (!cam_stats.camera_ready) {
+        send_state = "WAIT_CAMERA";
+    } else if (tx_delta > 0U) {
+        send_state = "SENDING";
+    } else if (!stream_stats.connected) {
+        send_state = "WAIT_LINK";
+    } else {
+        send_state = "WAIT_FRAME";
+    }
 
     if (cam_stats.frames_captured == 0U && !cam_stats.camera_ready) {
         s_no_frame_ticks++;
@@ -67,22 +250,29 @@ static void update_runtime_diagnostics_status(void) {
         s_no_frame_ticks = 0U;
     }
 
-    if (s_no_frame_ticks >= 2U) {
+    if (cam_stats.frames_captured == 0U && cam_stats.capture_failures > 0U) {
         snprintf(msg,
                  sizeof(msg),
-                 "cam:%s | stream:%s",
-                 cam_stats.last_error,
-                 stream_stats.last_error);
+                 "Cam:%s Link:%s Send:%s\ncam_err:%s",
+                 cam_state,
+                 link_state,
+                 send_state,
+                 cam_stats.last_error);
     } else {
         snprintf(msg,
                  sizeof(msg),
-                 "sock:%d q:%lu cap:%lu tx:%lu rej:%lu",
-                 stream_stats.connected ? 1 : 0,
-                 (unsigned long)stream_stats.queue_depth,
+                 "Cam:%s Link:%s Send:%s\ncap:%lu tx:%lu rej:%lu q:%lu",
+                 cam_state,
+                 link_state,
+                 send_state,
                  (unsigned long)cam_stats.frames_captured,
                  (unsigned long)stream_stats.frames_enqueued,
-                 (unsigned long)stream_stats.frames_rejected);
+                 (unsigned long)stream_stats.frames_rejected,
+                 (unsigned long)stream_stats.queue_depth);
     }
+
+    s_prev_frames_captured = cam_stats.frames_captured;
+    s_prev_frames_enqueued = stream_stats.frames_enqueued;
     app_state_set_status(msg);
 }
 
@@ -141,9 +331,12 @@ static void cleanup_countdown_timer(void) {
 }
 
 static void stop_and_return_home(void) {
-    focus_camera_capture_stop();
-    focus_image_stream_stop();
+    const bool mark_pending = (!s_is_quick && s_task_id > 0 && !s_task_marked_completed);
+    const int task_id = s_task_id;
+
+    doormount_led_sync_set_focus_active(false);
     cleanup_countdown_timer();
+    start_stop_cleanup(mark_pending, task_id);
     ui_navigate_home();
 }
 
@@ -161,8 +354,16 @@ static void start_focus_seconds(uint32_t seconds, bool bonus_focus) {
     set_controls_for_focus(true);
     focus_camera_capture_set_paused(false);
     focus_image_stream_set_paused(false);
+    doormount_led_sync_set_focus_active(true);
     app_state_set_status("Session running");
     update_timer_text();
+}
+
+static void start_bonus_focus_minutes(uint32_t minutes) {
+    if (minutes == 0U) {
+        minutes = 5U;
+    }
+    start_focus_seconds(minutes * 60U, true);
 }
 
 static void start_next_primary_focus(void) {
@@ -172,8 +373,8 @@ static void start_next_primary_focus(void) {
     }
 
     if (s_task_remaining_seconds == 0U) {
-        app_state_set_status("Session complete");
-        stop_and_return_home();
+        s_waiting_completion_confirm = true;
+        show_break_popup();
         return;
     }
 
@@ -195,6 +396,7 @@ static void start_break_countdown(void) {
     set_controls_for_focus(false);
     focus_camera_capture_set_paused(true);
     focus_image_stream_set_paused(true);
+    doormount_led_sync_set_focus_active(false);
     app_state_set_status("Break started");
     update_timer_text();
 }
@@ -235,13 +437,31 @@ static void popup_stop_event(lv_event_t * e) {
 static void popup_bonus_event(lv_event_t * e) {
     (void)e;
     close_popup();
-    start_focus_seconds((uint32_t)HOME_BONUS_FOCUS_MINUTES * 60U, true);
+    start_bonus_focus_minutes((uint32_t)HOME_BONUS_FOCUS_MINUTES);
+}
+
+static void popup_bonus_ten_event(lv_event_t * e) {
+    (void)e;
+    close_popup();
+    start_bonus_focus_minutes(10U);
 }
 
 static void popup_break_okay_event(lv_event_t * e) {
     (void)e;
     close_popup();
     start_break_countdown();
+}
+
+static void popup_complete_okay_event(lv_event_t * e) {
+    (void)e;
+    if (!s_is_quick && s_task_id > 0 && !s_task_marked_completed) {
+        s_task_marked_completed = true;
+        home_api_mark_subtask_completed(s_task_id);
+    }
+    s_waiting_completion_confirm = false;
+    close_popup();
+    app_state_set_status("Session complete");
+    stop_and_return_home();
 }
 
 static void popup_resume_cancel_event(lv_event_t * e) {
@@ -262,13 +482,13 @@ static void show_break_popup(void) {
     if (popup == NULL) return;
 
     lv_obj_t * title = lv_label_create(popup);
-    lv_label_set_text(title, "Take a Break?");
+    lv_label_set_text(title, s_waiting_completion_confirm ? "Task Complete!" : "Take a Break?");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_48, LV_PART_MAIN);
     lv_obj_set_style_text_color(title, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 20);
 
     lv_obj_t * bonus_btn = lv_btn_create(popup);
-    lv_obj_set_size(bonus_btn, lv_pct(100), 130);
+    lv_obj_set_size(bonus_btn, lv_pct(100), s_waiting_completion_confirm ? 95 : 130);
     lv_obj_align(bonus_btn, LV_ALIGN_TOP_MID, 0, 82);
     lv_obj_set_style_bg_color(bonus_btn, lv_color_hex(CLR_POPUP_MIDDLE), LV_PART_MAIN);
     lv_obj_set_style_border_width(bonus_btn, 0, LV_PART_MAIN);
@@ -281,42 +501,65 @@ static void show_break_popup(void) {
     lv_obj_set_style_text_color(bonus_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(bonus_label);
 
+    lv_obj_t * bonus_ten_btn = NULL;
+    if (s_waiting_completion_confirm) {
+        bonus_ten_btn = lv_btn_create(popup);
+        lv_obj_set_size(bonus_ten_btn, lv_pct(100), 95);
+        lv_obj_align(bonus_ten_btn, LV_ALIGN_TOP_MID, 0, 177);
+        lv_obj_set_style_bg_color(bonus_ten_btn, lv_color_hex(0xB08A00), LV_PART_MAIN);
+        lv_obj_set_style_border_width(bonus_ten_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(bonus_ten_btn, 0, LV_PART_MAIN);
+        lv_obj_add_event_cb(bonus_ten_btn, popup_bonus_ten_event, LV_EVENT_CLICKED, NULL);
+
+        lv_obj_t * bonus_ten_label = lv_label_create(bonus_ten_btn);
+        lv_label_set_text(bonus_ten_label, "+10 Minutes");
+        lv_obj_set_style_text_font(bonus_ten_label, &lv_font_montserrat_24, LV_PART_MAIN);
+        lv_obj_set_style_text_color(bonus_ten_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
+        lv_obj_center(bonus_ten_label);
+    }
+
     lv_obj_t * actions = lv_obj_create(popup);
     lv_obj_remove_style_all(actions);
-    lv_obj_set_size(actions, lv_pct(100), 110);
+    lv_obj_set_size(actions, lv_pct(100), s_waiting_completion_confirm ? 108 : 110);
     lv_obj_align(actions, LV_ALIGN_BOTTOM_MID, 0, 0);
     lv_obj_set_layout(actions, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(actions, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_flow(actions, s_waiting_completion_confirm ? LV_FLEX_FLOW_COLUMN : LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(actions, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
 
-    lv_obj_t * stop_btn = lv_btn_create(actions);
-    lv_obj_set_size(stop_btn, lv_pct(50), lv_pct(100));
-    lv_obj_set_style_bg_color(stop_btn, lv_color_hex(CLR_POPUP_CANCEL), LV_PART_MAIN);
-    lv_obj_set_style_border_width(stop_btn, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(stop_btn, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(stop_btn, popup_stop_event, LV_EVENT_CLICKED, NULL);
+    if (!s_waiting_completion_confirm) {
+        lv_obj_t * stop_btn = lv_btn_create(actions);
+        lv_obj_set_size(stop_btn, lv_pct(50), lv_pct(100));
+        lv_obj_set_style_bg_color(stop_btn, lv_color_hex(CLR_POPUP_CANCEL), LV_PART_MAIN);
+        lv_obj_set_style_border_width(stop_btn, 0, LV_PART_MAIN);
+        lv_obj_set_style_radius(stop_btn, 0, LV_PART_MAIN);
+        lv_obj_add_event_cb(stop_btn, popup_stop_event, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t * stop_label = lv_label_create(stop_btn);
-    lv_label_set_text(stop_label, "Stop");
-    lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_24, LV_PART_MAIN);
-    lv_obj_set_style_text_color(stop_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
-    lv_obj_center(stop_label);
+        lv_obj_t * stop_label = lv_label_create(stop_btn);
+        lv_label_set_text(stop_label, "Stop");
+        lv_obj_set_style_text_font(stop_label, &lv_font_montserrat_24, LV_PART_MAIN);
+        lv_obj_set_style_text_color(stop_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
+        lv_obj_center(stop_label);
+    }
 
     lv_obj_t * okay_btn = lv_btn_create(actions);
-    lv_obj_set_size(okay_btn, lv_pct(50), lv_pct(100));
+    lv_obj_set_size(okay_btn, s_waiting_completion_confirm ? lv_pct(100) : lv_pct(50), lv_pct(100));
     lv_obj_set_style_bg_color(okay_btn, lv_color_hex(CLR_POPUP_CONFIRM), LV_PART_MAIN);
     lv_obj_set_style_border_width(okay_btn, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(okay_btn, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(okay_btn, popup_break_okay_event, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(okay_btn,
+                        s_waiting_completion_confirm ? popup_complete_okay_event : popup_break_okay_event,
+                        LV_EVENT_CLICKED,
+                        NULL);
 
     lv_obj_t * okay_label = lv_label_create(okay_btn);
-    lv_label_set_text(okay_label, "Okay!");
+    lv_label_set_text(okay_label, "Okay");
     lv_obj_set_style_text_font(okay_label, &lv_font_montserrat_24, LV_PART_MAIN);
     lv_obj_set_style_text_color(okay_label, lv_color_hex(CLR_TITLE), LV_PART_MAIN);
     lv_obj_center(okay_label);
 
     s_phase = PHASE_WAITING_POPUP;
-    app_state_set_status("Break options");
+    doormount_led_sync_set_focus_active(false);
+    app_state_set_status(s_waiting_completion_confirm ? "Choose next step" : "Break options");
 }
 
 static void show_resume_popup(void) {
@@ -373,6 +616,7 @@ static void show_resume_popup(void) {
     lv_obj_center(resume_label);
 
     s_phase = PHASE_WAITING_POPUP;
+    doormount_led_sync_set_focus_active(false);
     app_state_set_status("Break complete");
 }
 
@@ -384,8 +628,8 @@ static void handle_focus_finished(void) {
     }
 
     if (!s_is_quick && s_task_remaining_seconds == 0U) {
-        app_state_set_status("Session complete");
-        stop_and_return_home();
+        s_waiting_completion_confirm = true;
+        show_break_popup();
         return;
     }
 
@@ -396,19 +640,30 @@ static void countdown_timer_cb(lv_timer_t * timer) {
     (void)timer;
 
     if (s_phase == PHASE_WAITING_POPUP) return;
-    if (s_phase == PHASE_FOCUS && s_paused) return;
+
+    if (s_phase == PHASE_FOCUS && s_paused) {
+        update_runtime_diagnostics_status();
+        return;
+    }
 
     if (s_phase_remaining_seconds > 0) {
-        s_phase_remaining_seconds--;
+        uint32_t step = (uint32_t)HOME_COUNTDOWN_SPEED_MULTIPLIER;
+        if (step == 0U) {
+            step = 1U;
+        }
+
+        if (s_phase_remaining_seconds > step) {
+            s_phase_remaining_seconds -= step;
+        } else {
+            s_phase_remaining_seconds = 0U;
+        }
     }
 
     update_timer_text();
 
     if (s_phase == PHASE_FOCUS && !s_paused) {
         s_diag_tick_counter++;
-        if ((s_diag_tick_counter % 5U) == 0U) {
-            update_runtime_diagnostics_status();
-        }
+        update_runtime_diagnostics_status();
     }
 
     if (s_phase_remaining_seconds == 0) {
@@ -427,6 +682,7 @@ static void pause_toggle_event(lv_event_t * e) {
     s_paused = !s_paused;
     focus_camera_capture_set_paused(s_paused);
     focus_image_stream_set_paused(s_paused);
+    doormount_led_sync_set_focus_active(!s_paused);
 
     if (s_pause_label != NULL) {
         lv_label_set_text(s_pause_label, s_paused ? LV_SYMBOL_PLAY "\nRESUME" : "PAUSE");
@@ -441,10 +697,34 @@ static void stop_event(lv_event_t * e) {
     stop_and_return_home();
 }
 
+static bool start_session_stream_key(void) {
+    if (!s_is_quick && s_task_id > 0) {
+        return focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
+    }
+
+    char session_key[64];
+    time_t now = time(NULL);
+    struct tm local_tm;
+
+#ifdef _WIN32
+    localtime_s(&local_tm, &now);
+#else
+    localtime_r(&now, &local_tm);
+#endif
+
+    strftime(session_key, sizeof(session_key), "%Y%m%d_%H%M%S", &local_tm);
+
+    char formatted_key[64];
+    snprintf(formatted_key, sizeof(formatted_key), "%d_%s", HOME_API_USER_ID, session_key);
+    return focus_image_stream_start_quick(HOME_API_USER_ID, formatted_key);
+}
+
 lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_seconds, bool is_quick_session, int task_id) {
     cleanup_countdown_timer();
     s_diag_tick_counter = 0;
     s_no_frame_ticks = 0;
+    s_prev_frames_captured = 0;
+    s_prev_frames_enqueued = 0;
 
     memset(s_session_title, 0, sizeof(s_session_title));
     if (title != NULL && title[0] != '\0') {
@@ -455,19 +735,20 @@ lv_obj_t * screen_focus_session_create(const char * title, uint32_t total_second
 
     s_is_quick = is_quick_session;
     s_task_id = task_id;
+    s_waiting_completion_confirm = false;
+    s_task_marked_in_progress = false;
+    s_task_marked_completed = false;
     s_task_remaining_seconds = s_is_quick ? 0U : total_seconds;
+    doormount_led_sync_set_focus_active(false);
 
-    bool stream_ok = true;
-    if (s_is_quick) {
-        char session_key[64];
-        unsigned long now = (unsigned long)time(NULL);
-        snprintf(session_key, sizeof(session_key), "%d_%lu", HOME_API_USER_ID, now);
-        stream_ok = focus_image_stream_start_quick(HOME_API_USER_ID, session_key);
-    } else if (s_task_id > 0) {
-        stream_ok = focus_image_stream_start_task(HOME_API_USER_ID, s_task_id);
+    bool stream_ok = start_session_stream_key();
+
+    if (!s_is_quick && s_task_id > 0) {
+        s_task_marked_in_progress = home_api_mark_subtask_in_progress(s_task_id);
     }
 
     bool camera_ok = focus_camera_capture_start();
+    focus_camera_capture_set_stream_enabled(true);
 
     if (total_seconds == 0) {
         total_seconds = (uint32_t)HOME_TASK_FALLBACK_MINUTES * 60U;

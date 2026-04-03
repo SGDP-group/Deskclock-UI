@@ -11,19 +11,24 @@ void net_stream_stop(void) {}
 bool net_stream_enqueue(const void * data, size_t len) { (void)data; (void)len; return false; }
 bool net_stream_is_connected(void) { return false; }
 size_t net_stream_queue_depth(void) { return 0; }
+NetStreamMode net_stream_mode(void) { return NET_STREAM_MODE_TCP; }
+uint32_t net_stream_fail_streak(void) { return 0; }
 #else
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netdb.h>
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include "lvgl/lvgl.h"
 #include "home_config.h"
 
-#define QUEUE_DEPTH 8
+#define QUEUE_DEPTH 16
 #define MAX_CHUNK   HOME_GAZE_STREAM_MAX_PACKET_BYTES
 #define RECONNECT_BACKOFF_MS 1000
+#define CONNECT_TIMEOUT_MS 1200
+#define BACKOFF_POLL_MS 50
 
 typedef struct {
     size_t len;
@@ -43,12 +48,114 @@ static int sock_fd = -1;
 static bool running = false;
 static char target_host[64];
 static uint16_t target_port = 0;
+static NetStreamMode s_mode = NET_STREAM_MODE_TCP;
+static uint32_t s_tcp_fail_streak = 0;
+
+static void mark_tcp_success(void) {
+    s_tcp_fail_streak = 0;
+    s_mode = NET_STREAM_MODE_TCP;
+}
+
+static void mark_tcp_failure(void) {
+    s_tcp_fail_streak++;
+#if HOME_GAZE_RTSP_FALLBACK_ENABLED
+    if (s_tcp_fail_streak >= HOME_GAZE_RTSP_FAIL_THRESHOLD) {
+        s_mode = NET_STREAM_MODE_RTSP_FALLBACK;
+    }
+#endif
+}
 
 static void close_socket(void) {
     if (sock_fd >= 0) {
         close(sock_fd);
         sock_fd = -1;
     }
+}
+
+static bool is_running_now(void) {
+    bool active = false;
+
+    pthread_mutex_lock(&q_mutex);
+    active = running;
+    pthread_mutex_unlock(&q_mutex);
+
+    return active;
+}
+
+static bool connect_with_timeout(int fd,
+                                 const struct sockaddr * addr,
+                                 socklen_t addrlen,
+                                 int timeout_ms) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags < 0) {
+        return false;
+    }
+
+    if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0) {
+        return false;
+    }
+
+    if (connect(fd, addr, addrlen) == 0) {
+        (void)fcntl(fd, F_SETFL, flags);
+        return true;
+    }
+
+    if (errno != EINPROGRESS) {
+        (void)fcntl(fd, F_SETFL, flags);
+        return false;
+    }
+
+    fd_set wfds;
+    FD_ZERO(&wfds);
+    FD_SET(fd, &wfds);
+
+    struct timeval tv;
+    tv.tv_sec = timeout_ms / 1000;
+    tv.tv_usec = (timeout_ms % 1000) * 1000;
+
+    int ready = select(fd + 1, NULL, &wfds, NULL, &tv);
+    if (ready <= 0) {
+        (void)fcntl(fd, F_SETFL, flags);
+        return false;
+    }
+
+    int so_error = 0;
+    socklen_t so_error_len = sizeof(so_error);
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) {
+        (void)fcntl(fd, F_SETFL, flags);
+        return false;
+    }
+
+    if (so_error != 0) {
+        (void)fcntl(fd, F_SETFL, flags);
+        return false;
+    }
+
+    if (fcntl(fd, F_SETFL, flags) < 0) {
+        return false;
+    }
+
+    return true;
+}
+
+static bool wait_backoff_interruptible(uint32_t total_ms) {
+    uint32_t elapsed = 0;
+
+    while (elapsed < total_ms) {
+        if (!is_running_now()) {
+            return false;
+        }
+
+        uint32_t slice = BACKOFF_POLL_MS;
+        if (slice > (total_ms - elapsed)) {
+            slice = total_ms - elapsed;
+        }
+
+        usleep(slice * 1000U);
+        elapsed += slice;
+    }
+
+    return is_running_now();
 }
 
 static int dial_server(void) {
@@ -74,7 +181,7 @@ static int dial_server(void) {
     int yes = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
 
-    if (connect(fd, res->ai_addr, res->ai_addrlen) < 0) {
+    if (!connect_with_timeout(fd, res->ai_addr, (socklen_t)res->ai_addrlen, CONNECT_TIMEOUT_MS)) {
         close(fd);
         freeaddrinfo(res);
         return -1;
@@ -82,6 +189,7 @@ static int dial_server(void) {
 
     struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
 
     freeaddrinfo(res);
     return fd;
@@ -126,8 +234,8 @@ static void * worker_thread(void * arg) {
         if (sock_fd < 0) {
             sock_fd = dial_server();
             if (sock_fd < 0) {
+                mark_tcp_failure();
                 LV_LOG_WARN("net_stream: connect failed, retrying");
-                usleep(RECONNECT_BACKOFF_MS * 1000);
                 /* push chunk back to front of queue */
                 pthread_mutex_lock(&q_mutex);
                 if (q_count < QUEUE_DEPTH) {
@@ -136,11 +244,16 @@ static void * worker_thread(void * arg) {
                     q_count++;
                 }
                 pthread_mutex_unlock(&q_mutex);
+                if (!wait_backoff_interruptible(RECONNECT_BACKOFF_MS)) {
+                    break;
+                }
                 continue;
             }
+            mark_tcp_success();
         }
 
         if (!send_all(sock_fd, chunk.data, chunk.len)) {
+            mark_tcp_failure();
             LV_LOG_WARN("net_stream: send failed, reconnecting");
             close_socket();
             /* requeue the unsent chunk */
@@ -151,7 +264,11 @@ static void * worker_thread(void * arg) {
                 q_count++;
             }
             pthread_mutex_unlock(&q_mutex);
-            usleep(RECONNECT_BACKOFF_MS * 1000);
+            if (!wait_backoff_interruptible(RECONNECT_BACKOFF_MS)) {
+                break;
+            }
+        } else {
+            mark_tcp_success();
         }
     }
 
@@ -173,6 +290,8 @@ bool net_stream_start(const char * host, uint16_t port) {
     target_port = port;
 
     q_head = q_tail = q_count = 0;
+    s_mode = NET_STREAM_MODE_TCP;
+    s_tcp_fail_streak = 0;
     running = true;
     int rc = pthread_create(&worker, NULL, worker_thread, NULL);
     pthread_mutex_unlock(&q_mutex);
@@ -191,7 +310,7 @@ void net_stream_stop(void) {
         return;
     }
     running = false;
-    pthread_cond_signal(&q_cv);
+    pthread_cond_broadcast(&q_cv);
     pthread_mutex_unlock(&q_mutex);
 
     pthread_join(worker, NULL);
@@ -228,6 +347,26 @@ bool net_stream_is_connected(void) {
     pthread_mutex_unlock(&q_mutex);
 
     return connected;
+}
+
+NetStreamMode net_stream_mode(void) {
+    NetStreamMode mode;
+
+    pthread_mutex_lock(&q_mutex);
+    mode = s_mode;
+    pthread_mutex_unlock(&q_mutex);
+
+    return mode;
+}
+
+uint32_t net_stream_fail_streak(void) {
+    uint32_t streak = 0;
+
+    pthread_mutex_lock(&q_mutex);
+    streak = s_tcp_fail_streak;
+    pthread_mutex_unlock(&q_mutex);
+
+    return streak;
 }
 
 size_t net_stream_queue_depth(void) {

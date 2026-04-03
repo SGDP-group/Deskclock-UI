@@ -20,6 +20,7 @@
 static lv_obj_t * s_overlay = NULL;
 static lv_obj_t * s_panel = NULL;
 static lv_obj_t * s_body_label = NULL;
+static lv_obj_t * s_task_title_label = NULL;
 static bool s_closing = false;
 static session_confirm_start_cb_t s_start_cb = NULL;
 static SessionConfirmKind s_kind = SESSION_CONFIRM_KIND_QUICK;
@@ -32,6 +33,7 @@ static void popup_delete_now(void) {
     s_overlay = NULL;
     s_panel = NULL;
     s_body_label = NULL;
+    s_task_title_label = NULL;
     s_closing = false;
 }
 
@@ -180,6 +182,16 @@ static void create_popup_shell(void) {
     lv_label_set_long_mode(s_body_label, LV_LABEL_LONG_WRAP);
     lv_obj_align(s_body_label, LV_ALIGN_CENTER, 0, 0);
 
+    s_task_title_label = lv_label_create(s_panel);
+    lv_obj_set_width(s_task_title_label, POPUP_W - 110);
+    lv_obj_set_height(s_task_title_label, lv_font_get_line_height(&lv_font_montserrat_24) * 2);
+    lv_obj_set_style_text_font(s_task_title_label, &lv_font_montserrat_24, LV_PART_MAIN);
+    lv_obj_set_style_text_color(s_task_title_label, lv_color_hex(CLR_TEXT), LV_PART_MAIN);
+    lv_obj_set_style_text_align(s_task_title_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_label_set_long_mode(s_task_title_label, LV_LABEL_LONG_WRAP);
+    lv_obj_align(s_task_title_label, LV_ALIGN_CENTER, 0, 22);
+    lv_obj_add_flag(s_task_title_label, LV_OBJ_FLAG_HIDDEN);
+
     lv_obj_t * actions = lv_obj_create(s_panel);
     lv_obj_remove_style_all(actions);
     lv_obj_set_size(actions, lv_pct(100), ACTION_ROW_H);
@@ -232,13 +244,16 @@ void session_confirm_popup_show_quick(void) {
     create_popup_shell();
     if (s_body_label != NULL) {
         lv_label_set_text(s_body_label, "Are you sure you want to start a quick session");
+        lv_obj_align(s_body_label, LV_ALIGN_CENTER, 0, 0);
+    }
+    if (s_task_title_label != NULL) {
+        lv_obj_add_flag(s_task_title_label, LV_OBJ_FLAG_HIDDEN);
     }
     start_show_animation();
 }
 
-void session_confirm_popup_show_task(const char * subtask_name, uint8_t task_index) {
-    char body[256];
-    const char * safe_subtask = (subtask_name != NULL && subtask_name[0] != '\0') ? subtask_name : "this task";
+void session_confirm_popup_show_task(const char * task_title, uint8_t task_index) {
+    const char * safe_task_title = (task_title != NULL && task_title[0] != '\0') ? task_title : "this task";
 
     s_kind = SESSION_CONFIRM_KIND_TASK;
     s_task_index = task_index;
@@ -246,9 +261,13 @@ void session_confirm_popup_show_task(const char * subtask_name, uint8_t task_ind
     create_popup_shell();
     if (s_body_label == NULL) return;
 
-    snprintf(body, sizeof(body), "Are you sure you want to start the session - %s now?", safe_subtask);
-    body[sizeof(body) - 1] = '\0';
-    lv_label_set_text(s_body_label, body);
+    lv_label_set_text(s_body_label, "Are you sure you want to start this session?");
+    lv_obj_align(s_body_label, LV_ALIGN_CENTER, 0, -42);
+
+    if (s_task_title_label != NULL) {
+        lv_label_set_text(s_task_title_label, safe_task_title);
+        lv_obj_clear_flag(s_task_title_label, LV_OBJ_FLAG_HIDDEN);
+    }
 
     start_show_animation();
 }

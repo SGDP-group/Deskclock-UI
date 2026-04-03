@@ -12,8 +12,22 @@
 #ifdef _WIN32
 
 bool focus_camera_capture_start(void) { return false; }
+bool focus_camera_capture_start_preview(void) { return false; }
+void focus_camera_capture_set_stream_enabled(bool enabled) { (void)enabled; }
 void focus_camera_capture_set_paused(bool paused) { (void)paused; }
 void focus_camera_capture_stop(void) {}
+bool focus_camera_capture_copy_latest_preview_rgb565(uint8_t * out_buf,
+                                                     size_t out_cap,
+                                                     uint32_t * out_w,
+                                                     uint32_t * out_h,
+                                                     uint32_t * out_seq) {
+    (void)out_buf;
+    (void)out_cap;
+    (void)out_w;
+    (void)out_h;
+    (void)out_seq;
+    return false;
+}
 
 FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
     FocusCameraCaptureStats stats;
@@ -35,13 +49,14 @@ FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
 #include <unistd.h>
 #include <linux/videodev2.h>
 
-#define CAMERA_DEVICE_COUNT 4
+#define CAMERA_DEVICE_COUNT 16
 #define CAPTURE_WIDTH 640
 #define CAPTURE_HEIGHT 480
 #define CAPTURE_BUFFER_COUNT 4
-#define V4L2_TIMEOUT_SEC 2
+#define V4L2_TIMEOUT_SEC 1
 #define JPEG_QUALITY 70
 #define JPEG_MAX_BYTES HOME_GAZE_STREAM_MAX_FRAME_BYTES
+#define PREVIEW_MAX_BYTES (CAPTURE_WIDTH * CAPTURE_HEIGHT * 2U)
 
 typedef struct {
     void * start;
@@ -66,6 +81,12 @@ typedef struct {
     char last_error[96];
     MmapBuffer buffers[CAPTURE_BUFFER_COUNT];
     uint32_t buffer_count;
+    uint64_t last_publish_ms;
+    bool stream_enabled;
+    uint8_t latest_preview_rgb565[PREVIEW_MAX_BYTES];
+    uint32_t latest_preview_w;
+    uint32_t latest_preview_h;
+    uint32_t latest_preview_seq;
     pthread_mutex_t lock;
 } CaptureState;
 
@@ -83,10 +104,80 @@ static CaptureState s_capture = {
     .width = CAPTURE_WIDTH,
     .height = CAPTURE_HEIGHT,
     .buffer_count = 0,
+    .last_publish_ms = 0,
+    .stream_enabled = true,
+    .latest_preview_w = 0,
+    .latest_preview_h = 0,
+    .latest_preview_seq = 0,
     .lock = PTHREAD_MUTEX_INITIALIZER,
 };
 
 static int s_probe_start = 0;
+
+static const char * s_camera_candidates[CAMERA_DEVICE_COUNT] = {
+    HOME_CAMERA_DEVICE,
+    "/dev/video0",
+    "/dev/video1",
+    "/dev/video2",
+    "/dev/video3",
+    "/dev/video13",
+    "/dev/video14",
+    "/dev/video15",
+    "/dev/video16",
+    "/dev/video20",
+    "/dev/video21",
+    "/dev/video22",
+    "/dev/video23",
+    "/dev/video10",
+    "/dev/video11",
+    "/dev/video12",
+};
+
+static bool camera_map_and_queue(void);
+static bool camera_stream_on(void);
+static void camera_close(void);
+static void yuv_to_rgb(uint8_t y, int u, int v, uint8_t * r, uint8_t * g, uint8_t * b);
+
+static uint16_t rgb_to_rgb565(uint8_t r, uint8_t g, uint8_t b) {
+    return (uint16_t)(((uint16_t)(r & 0xF8U) << 8U)
+                    | ((uint16_t)(g & 0xFCU) << 3U)
+                    | ((uint16_t)(b >> 3U)));
+}
+
+static void copy_yuyv_to_preview_rgb565(const uint8_t * yuyv, uint32_t width, uint32_t height) {
+    if (yuyv == NULL || width == 0U || height == 0U) return;
+    if (width > CAPTURE_WIDTH || height > CAPTURE_HEIGHT) return;
+
+    uint32_t dst_idx = 0U;
+    for (uint32_t y = 0; y < height; y++) {
+        const uint8_t * src = yuyv + ((size_t)y * width * 2U);
+        for (uint32_t x = 0; x < width; x += 2U) {
+            uint8_t y0 = src[0];
+            uint8_t u = src[1];
+            uint8_t y1 = src[2];
+            uint8_t v = src[3];
+            uint8_t r, g, b;
+            uint16_t px;
+
+            yuv_to_rgb(y0, u, v, &r, &g, &b);
+            px = rgb_to_rgb565(r, g, b);
+            s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)(px & 0xFFU);
+            s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)((px >> 8U) & 0xFFU);
+
+            if (x + 1U < width) {
+                yuv_to_rgb(y1, u, v, &r, &g, &b);
+                px = rgb_to_rgb565(r, g, b);
+                s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)(px & 0xFFU);
+                s_capture.latest_preview_rgb565[dst_idx++] = (uint8_t)((px >> 8U) & 0xFFU);
+            }
+            src += 4;
+        }
+    }
+
+    s_capture.latest_preview_w = width;
+    s_capture.latest_preview_h = height;
+    s_capture.latest_preview_seq++;
+}
 
 static void set_capture_error(const char * msg) {
     if (msg == NULL) return;
@@ -226,7 +317,6 @@ static bool camera_supports_format_fd(int fd, uint32_t pixfmt) {
 }
 
 static bool camera_open(void) {
-    char candidate[32];
     char last_reason[96] = "no camera device available";
     struct v4l2_capability cap;
     struct v4l2_format fmt;
@@ -241,8 +331,12 @@ static bool camera_open(void) {
         int i = (s_probe_start + n) % CAMERA_DEVICE_COUNT;
         int fd = -1;
         uint32_t requested_pixfmt = 0;
+        const char * candidate = s_camera_candidates[i];
 
-        snprintf(candidate, sizeof(candidate), "/dev/video%d", i);
+        if (candidate == NULL || candidate[0] == '\0') {
+            continue;
+        }
+
         fd = open(candidate, O_RDWR);
         if (fd < 0) {
             continue;
@@ -285,9 +379,16 @@ static bool camera_open(void) {
         }
 
         memset(&parm, 0, sizeof(parm));
+        uint32_t requested_fps = HOME_GAZE_STREAM_FPS;
+        if (HOME_CAMERA_PREVIEW_FPS > requested_fps) {
+            requested_fps = HOME_CAMERA_PREVIEW_FPS;
+        }
+        if (requested_fps == 0U) {
+            requested_fps = 1U;
+        }
         parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         parm.parm.capture.timeperframe.numerator = 1;
-        parm.parm.capture.timeperframe.denominator = HOME_GAZE_STREAM_FPS;
+        parm.parm.capture.timeperframe.denominator = requested_fps;
         (void)ioctl(fd, VIDIOC_S_PARM, &parm);
 
         memset(&req, 0, sizeof(req));
@@ -314,6 +415,42 @@ static bool camera_open(void) {
     }
 
     set_capture_error(last_reason);
+    return false;
+}
+
+static bool initialize_camera_pipeline(char * startup_error, size_t startup_error_len) {
+    if (startup_error != NULL && startup_error_len > 0U) {
+        startup_error[0] = '\0';
+    }
+
+    for (int attempt = 0; attempt < CAMERA_DEVICE_COUNT; attempt++) {
+        if (!camera_open()) {
+            if (startup_error != NULL && startup_error_len > 0U) {
+                snprintf(startup_error, startup_error_len, "%s", s_capture.last_error);
+            }
+            break;
+        }
+        if (!camera_map_and_queue()) {
+            if (startup_error != NULL && startup_error_len > 0U) {
+                snprintf(startup_error, startup_error_len, "%s", s_capture.last_error);
+            }
+            camera_close();
+            continue;
+        }
+        if (!camera_stream_on()) {
+            if (startup_error != NULL && startup_error_len > 0U) {
+                snprintf(startup_error, startup_error_len, "%s", s_capture.last_error);
+            }
+            camera_close();
+            continue;
+        }
+
+        if (startup_error != NULL && startup_error_len > 0U) {
+            startup_error[0] = '\0';
+        }
+        return true;
+    }
+
     return false;
 }
 
@@ -380,7 +517,7 @@ static void camera_close(void) {
     }
 }
 
-static bool capture_and_send_frame(void) {
+static bool capture_and_send_frame(uint8_t * jpeg_scratch, size_t jpeg_scratch_cap) {
     struct v4l2_buffer buf;
     fd_set read_fds;
     struct timeval tv;
@@ -392,7 +529,12 @@ static bool capture_and_send_frame(void) {
 
     int sel = select(s_capture.fd + 1, &read_fds, NULL, NULL, &tv);
     if (sel <= 0) {
-        set_capture_error(sel == 0 ? "camera frame timeout" : "select failed");
+        s_capture.capture_failures++;
+        if (sel == 0) {
+            set_capture_errorf("timeout:%s", s_capture.device_path[0] ? s_capture.device_path : "unknown");
+        } else {
+            set_capture_errorf("select_failed:%s", s_capture.device_path[0] ? s_capture.device_path : "unknown");
+        }
         return false;
     }
 
@@ -401,36 +543,64 @@ static bool capture_and_send_frame(void) {
     buf.memory = V4L2_MEMORY_MMAP;
 
     if (ioctl(s_capture.fd, VIDIOC_DQBUF, &buf) < 0) {
+        s_capture.capture_failures++;
         if (errno != EAGAIN) {
-            set_capture_error("VIDIOC_DQBUF failed");
+            set_capture_errorf("dqbuf_failed:%s", s_capture.device_path[0] ? s_capture.device_path : "unknown");
         }
         return false;
     }
 
     bool sent = false;
+    bool stream_enabled = false;
     if (buf.index < s_capture.buffer_count && buf.bytesused > 0) {
+        const uint64_t ts_ms = now_ms();
+        const uint64_t min_publish_interval_ms = (HOME_GAZE_STREAM_FPS > 0)
+                                               ? (1000ULL / (uint64_t)HOME_GAZE_STREAM_FPS)
+                                               : 200ULL;
+        const bool should_publish = (s_capture.last_publish_ms == 0ULL)
+                                 || ((ts_ms - s_capture.last_publish_ms) >= min_publish_interval_ms);
+
+        pthread_mutex_lock(&s_capture.lock);
+        stream_enabled = s_capture.stream_enabled;
+        pthread_mutex_unlock(&s_capture.lock);
+
         s_capture.frames_captured++;
 
-        if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_MJPEG) {
-            sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
-                                                (size_t)buf.bytesused,
-                                                now_ms(),
-                                                s_capture.seq++);
-        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
-            uint8_t jpeg_buf[JPEG_MAX_BYTES];
-            size_t jpeg_len = 0;
-
-            if (encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
-                                    s_capture.width,
-                                    s_capture.height,
-                                    jpeg_buf,
-                                    sizeof(jpeg_buf),
-                                    &jpeg_len)) {
-                sent = focus_image_stream_send_jpeg(jpeg_buf, jpeg_len, now_ms(), s_capture.seq++);
+        if (!should_publish) {
+            sent = true;
+        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_MJPEG) {
+            if (stream_enabled) {
+                sent = focus_image_stream_send_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                                    (size_t)buf.bytesused,
+                                                    ts_ms,
+                                                    s_capture.seq++);
             } else {
-                s_capture.capture_failures++;
-                set_capture_error("YUYV->JPEG encode failed");
-                sent = false;
+                sent = true;
+            }
+        } else if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
+            pthread_mutex_lock(&s_capture.lock);
+            copy_yuyv_to_preview_rgb565((const uint8_t *)s_capture.buffers[buf.index].start,
+                                        s_capture.width,
+                                        s_capture.height);
+            pthread_mutex_unlock(&s_capture.lock);
+
+            if (!should_publish || !stream_enabled) {
+                sent = true;
+            } else {
+                size_t jpeg_len = 0;
+                if (jpeg_scratch != NULL
+                 && encode_yuyv_to_jpeg((const uint8_t *)s_capture.buffers[buf.index].start,
+                                        s_capture.width,
+                                        s_capture.height,
+                                        jpeg_scratch,
+                                        jpeg_scratch_cap,
+                                        &jpeg_len)) {
+                    sent = focus_image_stream_send_jpeg(jpeg_scratch, jpeg_len, ts_ms, s_capture.seq++);
+                } else {
+                    s_capture.capture_failures++;
+                    set_capture_error("YUYV->JPEG encode failed");
+                    sent = false;
+                }
             }
         } else {
             s_capture.capture_failures++;
@@ -439,7 +609,10 @@ static bool capture_and_send_frame(void) {
         }
 
         if (sent) {
-            s_capture.frames_sent++;
+            if (should_publish) {
+                s_capture.frames_sent++;
+                s_capture.last_publish_ms = ts_ms;
+            }
             set_capture_errorf("ok:%s %s", s_capture.device_path, pixfmt_name(s_capture.v4l2_pixfmt));
         } else {
             s_capture.send_failures++;
@@ -462,28 +635,10 @@ static void * capture_worker(void * arg) {
     (void)arg;
 
     char startup_error[96];
-    startup_error[0] = '\0';
+    uint8_t * jpeg_scratch = NULL;
+    int consecutive_timeouts = 0;
 
-    for (int attempt = 0; attempt < CAMERA_DEVICE_COUNT; attempt++) {
-        if (!camera_open()) {
-            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
-            break;
-        }
-        if (!camera_map_and_queue()) {
-            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
-            camera_close();
-            continue;
-        }
-        if (!camera_stream_on()) {
-            snprintf(startup_error, sizeof(startup_error), "%s", s_capture.last_error);
-            camera_close();
-            continue;
-        }
-        startup_error[0] = '\0';
-        break;
-    }
-
-    if (s_capture.fd < 0) {
+    if (!initialize_camera_pipeline(startup_error, sizeof(startup_error))) {
         pthread_mutex_lock(&s_capture.lock);
         s_capture.capture_failures++;
         s_capture.camera_ready = false;
@@ -499,6 +654,17 @@ static void * capture_worker(void * arg) {
     pthread_mutex_lock(&s_capture.lock);
     s_capture.camera_ready = true;
     pthread_mutex_unlock(&s_capture.lock);
+
+    if (s_capture.v4l2_pixfmt == V4L2_PIX_FMT_YUYV) {
+        jpeg_scratch = (uint8_t *)malloc(JPEG_MAX_BYTES);
+        if (jpeg_scratch == NULL) {
+            pthread_mutex_lock(&s_capture.lock);
+            s_capture.capture_failures++;
+            set_capture_error("jpeg scratch alloc failed");
+            s_capture.running = false;
+            pthread_mutex_unlock(&s_capture.lock);
+        }
+    }
 
     while (1) {
         bool running = false;
@@ -516,9 +682,43 @@ static void * capture_worker(void * arg) {
             continue;
         }
 
-        if (!capture_and_send_frame()) {
+        if (!capture_and_send_frame(jpeg_scratch, JPEG_MAX_BYTES)) {
+            if (strncmp(s_capture.last_error, "timeout:", 8U) == 0) {
+                consecutive_timeouts++;
+            } else {
+                consecutive_timeouts = 0;
+            }
+
+            if (consecutive_timeouts >= 4) {
+                consecutive_timeouts = 0;
+
+                camera_stream_off();
+                camera_close();
+
+                pthread_mutex_lock(&s_capture.lock);
+                s_capture.camera_ready = false;
+                pthread_mutex_unlock(&s_capture.lock);
+
+                if (initialize_camera_pipeline(startup_error, sizeof(startup_error))) {
+                    pthread_mutex_lock(&s_capture.lock);
+                    s_capture.camera_ready = true;
+                    pthread_mutex_unlock(&s_capture.lock);
+                } else {
+                    pthread_mutex_lock(&s_capture.lock);
+                    s_capture.capture_failures++;
+                    set_capture_error(startup_error[0] != '\0' ? startup_error : "camera reinit failed");
+                    pthread_mutex_unlock(&s_capture.lock);
+                }
+            }
+
             usleep(20 * 1000);
+        } else {
+            consecutive_timeouts = 0;
         }
+    }
+
+    if (jpeg_scratch != NULL) {
+        free(jpeg_scratch);
     }
 
     camera_stream_off();
@@ -542,11 +742,16 @@ bool focus_camera_capture_start(void) {
     s_capture.running = true;
     s_capture.paused = false;
     s_capture.camera_ready = false;
-    s_capture.seq = 0;
+    s_capture.seq = 1;
     s_capture.frames_captured = 0;
     s_capture.frames_sent = 0;
     s_capture.capture_failures = 0;
     s_capture.send_failures = 0;
+    s_capture.last_publish_ms = 0;
+    s_capture.stream_enabled = true;
+    s_capture.latest_preview_w = 0;
+    s_capture.latest_preview_h = 0;
+    s_capture.latest_preview_seq = 0;
     set_capture_error("starting camera");
     pthread_mutex_unlock(&s_capture.lock);
 
@@ -561,6 +766,19 @@ bool focus_camera_capture_start(void) {
     }
 
     return true;
+}
+
+bool focus_camera_capture_start_preview(void) {
+    bool ok = focus_camera_capture_start();
+    if (!ok) return false;
+    focus_camera_capture_set_stream_enabled(false);
+    return true;
+}
+
+void focus_camera_capture_set_stream_enabled(bool enabled) {
+    pthread_mutex_lock(&s_capture.lock);
+    s_capture.stream_enabled = enabled;
+    pthread_mutex_unlock(&s_capture.lock);
 }
 
 void focus_camera_capture_set_paused(bool paused) {
@@ -579,6 +797,38 @@ void focus_camera_capture_stop(void) {
     if (was_running) {
         pthread_join(s_capture.worker, NULL);
     }
+}
+
+bool focus_camera_capture_copy_latest_preview_rgb565(uint8_t * out_buf,
+                                                     size_t out_cap,
+                                                     uint32_t * out_w,
+                                                     uint32_t * out_h,
+                                                     uint32_t * out_seq) {
+    size_t bytes;
+
+    if (out_buf == NULL || out_w == NULL || out_h == NULL || out_seq == NULL) {
+        return false;
+    }
+
+    pthread_mutex_lock(&s_capture.lock);
+    if (s_capture.latest_preview_w == 0U || s_capture.latest_preview_h == 0U || s_capture.latest_preview_seq == 0U) {
+        pthread_mutex_unlock(&s_capture.lock);
+        return false;
+    }
+
+    bytes = (size_t)s_capture.latest_preview_w * (size_t)s_capture.latest_preview_h * 2U;
+    if (bytes > out_cap) {
+        pthread_mutex_unlock(&s_capture.lock);
+        return false;
+    }
+
+    memcpy(out_buf, s_capture.latest_preview_rgb565, bytes);
+    *out_w = s_capture.latest_preview_w;
+    *out_h = s_capture.latest_preview_h;
+    *out_seq = s_capture.latest_preview_seq;
+    pthread_mutex_unlock(&s_capture.lock);
+
+    return true;
 }
 
 FocusCameraCaptureStats focus_camera_capture_get_stats(void) {
