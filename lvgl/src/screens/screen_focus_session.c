@@ -10,8 +10,16 @@
 #include "src/doormount_led_sync.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <pthread.h>
+#include <unistd.h>
+#endif
 
 #define CLR_BG             0x000000
 #define CLR_TITLE          0xF2F2F2
@@ -30,6 +38,8 @@
 
 #define POPUP_W            640
 #define POPUP_H            380
+#define STOP_PENDING_RETRY_DELAY_MS 1000U
+#define STOP_PENDING_RETRY_MAX_ATTEMPTS 8U
 
 typedef enum {
     PHASE_FOCUS = 0,
@@ -51,6 +61,7 @@ static bool s_bonus_focus = false;
 static bool s_waiting_completion_confirm = false;
 static bool s_task_marked_in_progress = false;
 static bool s_task_marked_completed = false;
+static bool s_stop_cleanup_inflight = false;
 static SessionPhase s_phase = PHASE_FOCUS;
 
 static uint32_t s_phase_total_seconds = 0;
@@ -63,7 +74,139 @@ static uint32_t s_prev_frames_captured = 0;
 static uint32_t s_prev_frames_enqueued = 0;
 static char s_session_title[96] = {0};
 
+#ifndef _WIN32
+static pthread_mutex_t s_stop_cleanup_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
 static void show_break_popup(void);
+
+static void sleep_ms(uint32_t delay_ms) {
+#ifdef _WIN32
+    Sleep(delay_ms);
+#else
+    usleep((useconds_t)delay_ms * 1000U);
+#endif
+}
+
+static bool stop_cleanup_try_begin(void) {
+#ifdef _WIN32
+    if (s_stop_cleanup_inflight) {
+        return false;
+    }
+
+    s_stop_cleanup_inflight = true;
+    return true;
+#else
+    bool can_begin = false;
+
+    pthread_mutex_lock(&s_stop_cleanup_lock);
+    if (!s_stop_cleanup_inflight) {
+        s_stop_cleanup_inflight = true;
+        can_begin = true;
+    }
+    pthread_mutex_unlock(&s_stop_cleanup_lock);
+
+    return can_begin;
+#endif
+}
+
+static void stop_cleanup_finish(void) {
+#ifdef _WIN32
+    s_stop_cleanup_inflight = false;
+#else
+    pthread_mutex_lock(&s_stop_cleanup_lock);
+    s_stop_cleanup_inflight = false;
+    pthread_mutex_unlock(&s_stop_cleanup_lock);
+#endif
+}
+
+bool screen_focus_session_cleanup_inflight(void) {
+#ifdef _WIN32
+    return s_stop_cleanup_inflight;
+#else
+    bool inflight = false;
+
+    pthread_mutex_lock(&s_stop_cleanup_lock);
+    inflight = s_stop_cleanup_inflight;
+    pthread_mutex_unlock(&s_stop_cleanup_lock);
+
+    return inflight;
+#endif
+}
+
+static void mark_pending_with_retry(int task_id) {
+    if (task_id <= 0) {
+        return;
+    }
+
+    for (uint32_t attempt = 0; attempt < STOP_PENDING_RETRY_MAX_ATTEMPTS; attempt++) {
+        if (home_api_mark_subtask_pending(task_id)) {
+            return;
+        }
+
+        if (attempt + 1U < STOP_PENDING_RETRY_MAX_ATTEMPTS) {
+            sleep_ms(STOP_PENDING_RETRY_DELAY_MS);
+        }
+    }
+}
+
+static void run_stop_cleanup(bool mark_pending, int task_id) {
+    focus_camera_capture_stop();
+    focus_image_stream_stop();
+    stop_cleanup_finish();
+
+    if (mark_pending) {
+        mark_pending_with_retry(task_id);
+    }
+}
+
+#ifndef _WIN32
+typedef struct {
+    bool mark_pending;
+    int task_id;
+} StopCleanupContext;
+
+static void * stop_cleanup_worker(void * arg) {
+    StopCleanupContext * ctx = (StopCleanupContext *)arg;
+
+    if (ctx == NULL) {
+        run_stop_cleanup(false, -1);
+        return NULL;
+    }
+
+    run_stop_cleanup(ctx->mark_pending, ctx->task_id);
+    free(ctx);
+    return NULL;
+}
+#endif
+
+static void start_stop_cleanup(bool mark_pending, int task_id) {
+    if (!stop_cleanup_try_begin()) {
+        return;
+    }
+
+#ifdef _WIN32
+    run_stop_cleanup(mark_pending, task_id);
+#else
+    StopCleanupContext * ctx = (StopCleanupContext *)malloc(sizeof(*ctx));
+    if (ctx == NULL) {
+        run_stop_cleanup(mark_pending, task_id);
+        return;
+    }
+
+    ctx->mark_pending = mark_pending;
+    ctx->task_id = task_id;
+
+    pthread_t worker;
+    if (pthread_create(&worker, NULL, stop_cleanup_worker, ctx) != 0) {
+        free(ctx);
+        run_stop_cleanup(mark_pending, task_id);
+        return;
+    }
+
+    pthread_detach(worker);
+#endif
+}
 
 static void update_runtime_diagnostics_status(void) {
     FocusImageStreamStats stream_stats = focus_image_stream_get_stats();
@@ -188,14 +331,12 @@ static void cleanup_countdown_timer(void) {
 }
 
 static void stop_and_return_home(void) {
-    if (!s_is_quick && s_task_id > 0 && !s_task_marked_completed) {
-        home_api_mark_subtask_pending(s_task_id);
-    }
+    const bool mark_pending = (!s_is_quick && s_task_id > 0 && !s_task_marked_completed);
+    const int task_id = s_task_id;
 
     doormount_led_sync_set_focus_active(false);
-    focus_camera_capture_stop();
-    focus_image_stream_stop();
     cleanup_countdown_timer();
+    start_stop_cleanup(mark_pending, task_id);
     ui_navigate_home();
 }
 
